@@ -1,0 +1,37 @@
+﻿.eh-admin .eh-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;margin-bottom:24px;box-shadow:0 6px 18px rgba(15,23,42,.06)}
+.eh-admin .eh-card h2{margin-top:0;font-size:20px;color:#0f172a}
+.eh-admin .eh-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px}
+.eh-admin .eh-meta-table{width:100%;border-collapse:separate;border-spacing:0 6px}
+.eh-admin .eh-meta-table th{font-weight:600;color:#475569;padding-right:12px;text-align:left}
+.eh-admin .eh-meta-table td{color:#0f172a}
+
+.eh-filter-bar{display:flex;flex-wrap:wrap;gap:12px;margin:20px 0;padding:16px;background:#fff;border:1px solid #e2e8f0;border-radius:12px}
+.eh-filter-bar select,.eh-filter-bar input[type="text"]{min-width:200px;padding:8px 12px;border:1px solid #cbd5f5;border-radius:8px}
+.eh-filter-bar .button{align-self:center}
+
+.eh-table-wrap{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:0 0 12px;overflow:hidden}
+.eh-table-wrap table{margin:0}
+.eh-table-wrap thead{background:#f8fafc}
+.eh-badge-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600}
+.eh-badge-pill.status-registered{background:#e0f2fe;color:#0369a1}
+.eh-badge-pill.status-confirmed{background:#dcfce7;color:#15803d}
+.eh-badge-pill.status-cancelled{background:#fee2e2;color:#b91c1c}
+.eh-badge-pill.status-attended{background:#ede9fe;color:#5b21b6}
+.eh-badge-pill.status-no_show{background:#ffe4e6;color:#be123c}
+
+.eh-form-two-col{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}
+.eh-form-two-col .field{display:flex;flex-direction:column}
+.eh-form-two-col label{font-weight:600;margin-bottom:4px;color:#0f172a}
+.eh-form-two-col input,.eh-form-two-col select{padding:10px;border:1px solid #cbd5f5;border-radius:8px}
+.eh-form-card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:24px;margin-top:24px}
+
+#eh-admin-calendar{min-height:650px}
+.eh-placeholder-panel{margin-top:10px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:13px}
+.eh-placeholder-panel summary{cursor:pointer;font-weight:600;margin-bottom:8px}
+.eh-placeholder-panel ul{margin:8px 0 0 18px;padding:0;list-style:disc}
+.eh-placeholder-panel code{background:#0f172a0d;padding:2px 6px;border-radius:4px;font-size:12px}
+.eh-session-meta .eh-section{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:24px;box-shadow:0 8px 24px rgba(15,23,42,.05)}
+.eh-session-meta .eh-section h2{margin-top:0;font-size:18px;color:#0f172a}
+.eh-session-meta .field.toggle label{display:inline-flex;align-items:center;gap:8px;font-weight:600}
+.eh-session-meta textarea{min-height:120px}
+.eh-template-select{width:100%;min-height:120px;padding:8px;border:1px solid #cbd5f5;border-radius:10px}

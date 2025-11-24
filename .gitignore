@@ -1,0 +1,13 @@
+﻿# Ignore backups, OS noise, vendor bins
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.bak
+*.swp
+node_modules/
+vendor/
+.cache/
+.idea/
+.vscode/
+/.phpunit.result.cache
