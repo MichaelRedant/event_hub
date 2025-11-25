@@ -1,6 +1,9 @@
 <?php
 namespace EventHub;
 
+use WP_REST_Request;
+use WP_REST_Response;
+use WP_REST_Server;
 use wpdb;
 
 defined('ABSPATH') || exit;
@@ -19,10 +22,12 @@ class Registrations
 
     /**
      * Create a registration record.
+     *
      * @param array $data
-     * @return int|\WP_Error Inserted ID or WP_Error
+     * @param bool  $is_admin Allow admins to bypass capacity/time/captcha restrictions.
+     * @return int|\WP_Error
      */
-    public function create_registration(array $data)
+    public function create_registration(array $data, bool $is_admin = false)
     {
         global $wpdb;
 
@@ -38,8 +43,11 @@ class Registrations
             'people_count' => 1,
             'status' => 'registered',
             'consent_marketing' => 0,
+            'waitlist_opt_in' => 0,
         ];
         $data = wp_parse_args($data, $defaults);
+
+        $waitlist_opt_in = !empty($data['waitlist_opt_in']);
 
         $data = [
             'session_id' => (int) $data['session_id'],
@@ -56,6 +64,9 @@ class Registrations
             'created_at' => current_time('mysql'),
             'updated_at' => current_time('mysql'),
         ];
+        if (!isset(self::get_status_labels()[$data['status']])) {
+            $data['status'] = $is_admin ? 'confirmed' : 'registered';
+        }
 
         if (empty($data['session_id']) || empty($data['first_name']) || empty($data['last_name']) || empty($data['email'])) {
             return new \WP_Error('invalid_data', __('Verplichte velden ontbreken.', 'event-hub'));
@@ -65,12 +76,12 @@ class Registrations
         }
 
         $session_status = get_post_meta((int) $data['session_id'], '_eh_status', true) ?: 'open';
-        if ($session_status !== 'open') {
+        if (!$is_admin && !in_array($session_status, ['open', 'full'], true)) {
             return new \WP_Error('event_closed', __('Dit event accepteert momenteel geen inschrijvingen.', 'event-hub'));
         }
 
         // CAPTCHA check
-        if (\EventHub\Security::captcha_enabled()) {
+        if (!$is_admin && \EventHub\Security::captcha_enabled()) {
             $token = isset($_POST['eh_captcha_token']) ? sanitize_text_field((string) $_POST['eh_captcha_token']) : '';
             if (!\EventHub\Security::verify_token($token, 'event_hub_register')) {
                 return new \WP_Error('captcha_failed', __('CAPTCHA validatie mislukt. Probeer opnieuw.', 'event-hub'));
@@ -78,21 +89,37 @@ class Registrations
         }
 
         // Booking window + capacity checks
-        $now = current_time('timestamp');
-        $open = get_post_meta((int)$data['session_id'], '_eh_booking_open', true);
-        $close = get_post_meta((int)$data['session_id'], '_eh_booking_close', true);
-        if ($open && $now < strtotime($open)) {
-            return new \WP_Error('booking_not_open', __('Inschrijvingen zijn nog niet geopend voor dit event.', 'event-hub'));
-        }
-        if ($close && $now > strtotime($close)) {
-            return new \WP_Error('booking_closed', __('Inschrijvingen zijn gesloten voor dit event.', 'event-hub'));
-        }
-        if (!$this->can_register($data['session_id'], $data['people_count'])) {
-            return new \WP_Error('capacity_full', __('Dit event zit vol.', 'event-hub'));
+        if (!$is_admin) {
+            $now = current_time('timestamp');
+            $open = get_post_meta((int) $data['session_id'], '_eh_booking_open', true);
+            $close = get_post_meta((int) $data['session_id'], '_eh_booking_close', true);
+            $event_start = get_post_meta((int) $data['session_id'], '_eh_date_start', true);
+            if ($open && $now < strtotime($open)) {
+                return new \WP_Error('booking_not_open', __('Inschrijvingen zijn nog niet geopend voor dit event.', 'event-hub'));
+            }
+            if ($close && $now > strtotime($close)) {
+                return new \WP_Error('booking_closed', __('Inschrijvingen zijn gesloten voor dit event.', 'event-hub'));
+            }
+            if (!$close && $event_start) {
+                $event_start_ts = strtotime($event_start);
+                if ($event_start_ts) {
+                    $event_day_cutoff = strtotime(date('Y-m-d 00:00:00', $event_start_ts));
+                    if ($event_day_cutoff && $now >= $event_day_cutoff) {
+                        return new \WP_Error('booking_closed', __('Inschrijvingen zijn gesloten voor dit event.', 'event-hub'));
+                    }
+                }
+            }
+            if (!$this->has_capacity((int) $data['session_id'], (int) $data['people_count'])) {
+                if ($waitlist_opt_in) {
+                    $data['status'] = 'waitlist';
+                } else {
+                    return new \WP_Error('capacity_full', __('Dit event zit vol.', 'event-hub'));
+                }
+            }
         }
 
         // Duplicate check by email + session
-        if ($this->exists_by_email((int) $data['session_id'], (string) $data['email'])) {
+        if (!$is_admin && $this->exists_by_email((int) $data['session_id'], (string) $data['email'])) {
             return new \WP_Error('duplicate', __('Je bent al ingeschreven voor dit event.', 'event-hub'));
         }
 
@@ -110,8 +137,25 @@ class Registrations
 
         $id = (int) $wpdb->insert_id;
         $this->sync_session_status((int) $data['session_id']);
-        do_action('event_hub_registration_created', $id);
+        if (($data['status'] ?? '') !== 'waitlist') {
+            do_action('event_hub_registration_created', $id);
+        }
         return $id;
+    }
+
+    /**
+     * @return array<string,string>
+     */
+    public static function get_status_labels(): array
+    {
+        return [
+            'registered' => __('Geregistreerd', 'event-hub'),
+            'confirmed'  => __('Bevestigd', 'event-hub'),
+            'cancelled'  => __('Geannuleerd', 'event-hub'),
+            'attended'   => __('Aanwezig', 'event-hub'),
+            'no_show'    => __('No-show', 'event-hub'),
+            'waitlist'   => __('Wachtlijst', 'event-hub'),
+        ];
     }
 
     /**
@@ -236,18 +280,23 @@ class Registrations
         $now = current_time('timestamp');
         $open = get_post_meta($session_id, '_eh_booking_open', true);
         $close = get_post_meta($session_id, '_eh_booking_close', true);
+        $event_start = get_post_meta($session_id, '_eh_date_start', true);
         if ($open && $now < strtotime($open)) {
             return false;
         }
         if ($close && $now > strtotime($close)) {
             return false;
         }
-        $capacity = (int) get_post_meta($session_id, '_eh_capacity', true);
-        if ($capacity <= 0) {
-            return true; // unlimited or not set
+        if (!$close && $event_start) {
+            $event_start_ts = strtotime($event_start);
+            if ($event_start_ts) {
+                $event_day_cutoff = strtotime(date('Y-m-d 00:00:00', $event_start_ts));
+                if ($event_day_cutoff && $now >= $event_day_cutoff) {
+                    return false;
+                }
+            }
         }
-        $booked = $this->count_booked($session_id);
-        return ($booked + max(1, $people)) <= $capacity;
+        return $this->has_capacity($session_id, $people);
     }
 
     /**
@@ -259,6 +308,16 @@ class Registrations
         $sql = $wpdb->prepare("SELECT id FROM {$this->table} WHERE session_id = %d AND email = %s LIMIT 1", $session_id, $email);
         $id = $wpdb->get_var($sql);
         return !empty($id);
+    }
+
+    private function has_capacity(int $session_id, int $people = 1): bool
+    {
+        $capacity = (int) get_post_meta($session_id, '_eh_capacity', true);
+        if ($capacity <= 0) {
+            return true;
+        }
+        $booked = $this->count_booked($session_id);
+        return ($booked + max(1, $people)) <= $capacity;
     }
 
     /**
@@ -305,8 +364,145 @@ class Registrations
         $state = $this->get_capacity_state($session_id);
         if ($state['is_full'] && $status !== 'full') {
             update_post_meta($session_id, '_eh_status', 'full');
+            $status = 'full';
         } elseif (!$state['is_full'] && $status === 'full') {
             update_post_meta($session_id, '_eh_status', 'open');
+            $status = 'open';
         }
+
+        if ($status === 'open') {
+            $this->promote_waitlist($session_id);
+        }
+    }
+
+    private function promote_waitlist(int $session_id): void
+    {
+        $capacity = (int) get_post_meta($session_id, '_eh_capacity', true);
+        if ($capacity <= 0) {
+            return;
+        }
+
+        global $wpdb;
+        while ($this->has_capacity($session_id, 1)) {
+            $next = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT * FROM {$this->table} WHERE session_id = %d AND status = %s ORDER BY created_at ASC LIMIT 1",
+                    $session_id,
+                    'waitlist'
+                ),
+                ARRAY_A
+            );
+            if (!$next) {
+                break;
+            }
+            $people = max(1, (int) ($next['people_count'] ?? 1));
+            if (!$this->has_capacity($session_id, $people)) {
+                break;
+            }
+
+            $updated = $wpdb->update(
+                $this->table,
+                [
+                    'status' => 'registered',
+                    'updated_at' => current_time('mysql'),
+                ],
+                ['id' => (int) $next['id']],
+                ['%s', '%s'],
+                ['%d']
+            );
+
+            if ($updated === false) {
+                break;
+            }
+
+            $reg_id = (int) $next['id'];
+            do_action('event_hub_waitlist_promoted', $reg_id);
+            do_action('event_hub_registration_created', $reg_id);
+        }
+    }
+
+    public function register_rest_routes(): void
+    {
+        register_rest_route('event-hub/v1', '/register', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [$this, 'handle_rest_register'],
+            'permission_callback' => '__return_true',
+        ]);
+    }
+
+    public function handle_rest_register(WP_REST_Request $request): WP_REST_Response
+    {
+        $params = $request->get_json_params();
+        if (!$params) {
+            $params = $request->get_body_params();
+        }
+
+        $data = [
+            'session_id' => isset($params['session_id']) ? (int) $params['session_id'] : 0,
+            'first_name' => sanitize_text_field($params['first_name'] ?? ''),
+            'last_name' => sanitize_text_field($params['last_name'] ?? ''),
+            'email' => sanitize_email($params['email'] ?? ''),
+            'phone' => isset($params['phone']) ? sanitize_text_field((string) $params['phone']) : null,
+            'company' => isset($params['company']) ? sanitize_text_field((string) $params['company']) : null,
+            'vat' => isset($params['vat']) ? sanitize_text_field((string) $params['vat']) : null,
+            'role' => isset($params['role']) ? sanitize_text_field((string) $params['role']) : null,
+            'people_count' => isset($params['people_count']) ? (int) $params['people_count'] : 1,
+            'consent_marketing' => !empty($params['consent_marketing']) ? 1 : 0,
+        ];
+
+        if (isset($params['captcha_token'])) {
+            $_POST['eh_captcha_token'] = sanitize_text_field((string) $params['captcha_token']);
+        } else {
+            unset($_POST['eh_captcha_token']);
+        }
+
+        $result = $this->create_registration($data);
+        if (is_wp_error($result)) {
+            return new WP_REST_Response([
+                'success' => false,
+                'message' => $result->get_error_message(),
+            ], 400);
+        }
+
+        $registration = $this->get_registration($result);
+        $is_waitlist = $registration && ($registration['status'] ?? '') === 'waitlist';
+
+        $state = $this->get_capacity_state($data['session_id']);
+        $status = get_post_meta($data['session_id'], '_eh_status', true) ?: 'open';
+        $status_badge = $this->get_status_badge_data($status, $state['is_full']);
+        $available_label = '';
+        if ($state['capacity'] > 0) {
+            $available_label = sprintf(_n('%d plaats beschikbaar', '%d plaatsen beschikbaar', $state['available'], 'event-hub'), $state['available']);
+        }
+
+        return new WP_REST_Response([
+            'success' => true,
+            'message' => $is_waitlist ? __('Bedankt! Je staat nu op de wachtlijst.', 'event-hub') : __('Bedankt! We hebben je inschrijving ontvangen.', 'event-hub'),
+            'registration_id' => $result,
+            'waitlist' => $is_waitlist,
+            'session' => [
+                'id' => (int) $data['session_id'],
+                'status' => $status,
+                'status_label' => $status_badge['label'],
+                'status_class' => $status_badge['class'],
+                'state' => $state,
+                'available_label' => $available_label,
+                'button_disabled' => in_array($status, ['cancelled', 'closed'], true),
+            ],
+        ]);
+    }
+
+    private function get_status_badge_data(string $status, bool $is_full): array
+    {
+        if ($status === 'cancelled') {
+            return ['label' => __('Geannuleerd', 'event-hub'), 'class' => 'eh-badge-cancelled'];
+        }
+        if ($status === 'closed') {
+            return ['label' => __('Gesloten', 'event-hub'), 'class' => 'eh-badge-closed'];
+        }
+        if ($status === 'full' || $is_full) {
+            return ['label' => __('Wachtlijst', 'event-hub'), 'class' => 'eh-badge-waitlist'];
+        }
+        return ['label' => __('Beschikbaar', 'event-hub'), 'class' => 'eh-badge-available'];
     }
 }

@@ -30,8 +30,23 @@
 .eh-placeholder-panel summary{cursor:pointer;font-weight:600;margin-bottom:8px}
 .eh-placeholder-panel ul{margin:8px 0 0 18px;padding:0;list-style:disc}
 .eh-placeholder-panel code{background:#0f172a0d;padding:2px 6px;border-radius:4px;font-size:12px}
-.eh-session-meta .eh-section{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:24px;margin-bottom:24px;box-shadow:0 8px 24px rgba(15,23,42,.05)}
-.eh-session-meta .eh-section h2{margin-top:0;font-size:18px;color:#0f172a}
+.eh-session-meta .eh-onboarding-card{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:20px;margin-bottom:24px;box-shadow:0 10px 26px rgba(15,23,42,.08)}
+.eh-session-meta .eh-onboarding-card h2{margin-top:0;font-size:18px;color:#0f172a}
+.eh-session-meta .eh-onboarding-card p{font-size:13px;color:#475569;margin:0 0 8px}
+.eh-session-meta .eh-onboarding-card ol{margin:12px 0 8px 20px;padding:0;color:#1e293b;font-size:13px}
+.eh-session-meta .eh-onboarding-card li{margin-bottom:4px}
+.eh-session-meta .eh-tip{margin:12px 0 0;background:#eff6ff;color:#1d4ed8;padding:8px 12px;border-radius:10px;font-size:12px;border:1px solid #dbeafe}
+.eh-session-meta .eh-section{background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:24px;margin-bottom:24px;box-shadow:0 12px 24px rgba(15,23,42,.05)}
+.eh-session-meta .eh-section h2{margin:0;font-size:20px;color:#0f172a}
+.eh-session-meta .eh-section-header{display:flex;gap:16px;margin-bottom:18px;align-items:flex-start}
+.eh-session-meta .eh-section-header>div{flex:1}
+.eh-session-meta .step-label{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;background:#e0f2fe;color:#0369a1;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.eh-session-meta .eh-field-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.eh-session-meta .eh-field-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:16px;padding:18px;box-shadow:0 8px 18px rgba(15,23,42,.05);display:flex;flex-direction:column;gap:12px}
+.eh-session-meta .eh-field-card__head h3{margin:0;font-size:15px;color:#0f172a}
+.eh-session-meta .eh-field-card__head p{margin:4px 0 0;font-size:12px;color:#64748b}
 .eh-session-meta .field.toggle label{display:inline-flex;align-items:center;gap:8px;font-weight:600}
 .eh-session-meta textarea{min-height:120px}
 .eh-template-select{width:100%;min-height:120px;padding:8px;border:1px solid #cbd5f5;border-radius:10px}
+.eh-form-two-col .field.full{grid-column:1 / -1}
+.eh-session-meta .description{font-size:12px;color:#64748b;margin:.35em 0 0}

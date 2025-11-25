@@ -59,12 +59,13 @@ class Emails
         add_action('event_hub_registration_created', [$this, 'handle_registration_created'], 10, 1);
         add_action('event_hub_send_reminder', [$this, 'send_reminder'], 10, 1);
         add_action('event_hub_send_followup', [$this, 'send_followup'], 10, 1);
+        add_action('event_hub_waitlist_promoted', [$this, 'send_waitlist_promotion'], 10, 1);
     }
 
     public function handle_registration_created(int $registration_id): void
     {
         $reg = $this->registrations->get_registration($registration_id);
-        if (!$reg) { return; }
+        if (!$reg || ($reg['status'] ?? '') === 'waitlist') { return; }
         $session_id = (int) $reg['session_id'];
         $start = get_post_meta($session_id, '_eh_date_start', true);
         $end   = get_post_meta($session_id, '_eh_date_end', true);
@@ -137,6 +138,22 @@ class Emails
             $subject = (string) get_post_meta((int)$tpl_id, '_eh_email_subject', true);
             $body    = (string) get_post_meta((int)$tpl_id, '_eh_email_body', true);
             $this->send_mail_with_placeholders($reg, $subject, $body, 'followup');
+        }
+    }
+
+    public function send_waitlist_promotion(int $registration_id): void
+    {
+        $reg = $this->registrations->get_registration($registration_id);
+        if (!$reg) { return; }
+        $session_id = (int) $reg['session_id'];
+        $tpl_ids = (array) get_post_meta($session_id, '_eh_email_waitlist_templates', true);
+        if (!$tpl_ids) {
+            return;
+        }
+        foreach (array_filter($tpl_ids) as $tpl_id) {
+            $subject = (string) get_post_meta((int) $tpl_id, '_eh_email_subject', true);
+            $body    = (string) get_post_meta((int) $tpl_id, '_eh_email_body', true);
+            $this->send_mail_with_placeholders($reg, $subject, $body, 'waitlist_promotion');
         }
     }
 

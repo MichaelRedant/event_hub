@@ -2,6 +2,10 @@
 namespace EventHub\Elementor;
 
 use Elementor\Controls_Manager;
+use Elementor\Group_Control_Background;
+use Elementor\Group_Control_Border;
+use Elementor\Group_Control_Box_Shadow;
+use Elementor\Group_Control_Typography;
 use Elementor\Widget_Base;
 use EventHub\Settings;
 use WP_Query;
@@ -27,7 +31,7 @@ class Widget_Session_List extends Widget_Base
 
     public function get_categories(): array
     {
-        return ['general'];
+        return ['event-hub'];
     }
 
     protected function register_controls(): void
@@ -132,6 +136,14 @@ class Widget_Session_List extends Widget_Base
             'default' => 'yes',
         ]);
 
+        $this->add_control('button_text', [
+            'label' => __('Knoplabel', 'event-hub'),
+            'type' => Controls_Manager::TEXT,
+            'default' => __('Meer informatie', 'event-hub'),
+            'label_block' => true,
+            'condition' => ['show_button' => 'yes'],
+        ]);
+
         $this->add_control('show_search', [
             'label' => __('Toon zoekveld', 'event-hub'),
             'type' => Controls_Manager::SWITCHER,
@@ -144,6 +156,411 @@ class Widget_Session_List extends Widget_Base
             'type' => Controls_Manager::SWITCHER,
             'return_value' => 'yes',
             'default' => 'yes',
+        ]);
+
+        $this->add_control('empty_state_text', [
+            'label' => __('Tekst geen resultaten', 'event-hub'),
+            'type' => Controls_Manager::TEXT,
+            'default' => __('Geen komende events gevonden.', 'event-hub'),
+            'label_block' => true,
+        ]);
+
+        $this->end_controls_section();
+
+        $this->register_layout_styles();
+        $this->register_card_styles();
+        $this->register_typography_styles();
+        $this->register_button_styles();
+        $this->register_badge_styles();
+        $this->register_search_styles();
+    }
+
+    private function register_layout_styles(): void
+    {
+        $this->start_controls_section('section_layout_style', [
+            'label' => __('Lay-out', 'event-hub'),
+            'tab' => Controls_Manager::TAB_STYLE,
+        ]);
+
+        $this->add_responsive_control('card_columns', [
+            'label' => __('Kolommen (kaartlay-out)', 'event-hub'),
+            'type' => Controls_Manager::SLIDER,
+            'range' => [
+                'px' => [
+                    'min' => 1,
+                    'max' => 4,
+                    'step' => 1,
+                ],
+            ],
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-list.eh-layout-card' => 'grid-template-columns: repeat({{SIZE}}, minmax(0,1fr));',
+            ],
+            'condition' => [
+                'layout' => 'card',
+            ],
+        ]);
+
+        $this->add_responsive_control('card_gap', [
+            'label' => __('Afstand tussen items', 'event-hub'),
+            'type' => Controls_Manager::SLIDER,
+            'range' => [
+                'px' => [
+                    'min' => 0,
+                    'max' => 80,
+                ],
+            ],
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-list' => 'gap: {{SIZE}}{{UNIT}};',
+            ],
+        ]);
+
+        $this->add_responsive_control('card_alignment', [
+            'label' => __('Tekstuitlijning', 'event-hub'),
+            'type' => Controls_Manager::CHOOSE,
+            'options' => [
+                'left' => [
+                    'title' => __('Links', 'event-hub'),
+                    'icon' => 'eicon-text-align-left',
+                ],
+                'center' => [
+                    'title' => __('Centreren', 'event-hub'),
+                    'icon' => 'eicon-text-align-center',
+                ],
+                'right' => [
+                    'title' => __('Rechts', 'event-hub'),
+                    'icon' => 'eicon-text-align-right',
+                ],
+            ],
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card' => 'text-align: {{VALUE}};',
+            ],
+        ]);
+
+        $this->end_controls_section();
+    }
+
+    private function register_card_styles(): void
+    {
+        $this->start_controls_section('section_card_style', [
+            'label' => __('Kaarten', 'event-hub'),
+            'tab' => Controls_Manager::TAB_STYLE,
+        ]);
+
+        if (class_exists(Group_Control_Background::class)) {
+            $this->add_group_control(Group_Control_Background::get_type(), [
+                'name' => 'card_background',
+                'types' => ['classic', 'gradient'],
+                'selector' => '{{WRAPPER}} .eh-session-card',
+            ]);
+        }
+
+        if (class_exists(Group_Control_Border::class)) {
+            $this->add_group_control(Group_Control_Border::get_type(), [
+                'name' => 'card_border',
+                'selector' => '{{WRAPPER}} .eh-session-card',
+            ]);
+        }
+
+        $this->add_responsive_control('card_border_radius', [
+            'label' => __('Hoekradius', 'event-hub'),
+            'type' => Controls_Manager::SLIDER,
+            'size_units' => ['px', '%'],
+            'range' => [
+                'px' => [
+                    'min' => 0,
+                    'max' => 60,
+                ],
+                '%' => [
+                    'min' => 0,
+                    'max' => 50,
+                ],
+            ],
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card' => 'border-radius: {{SIZE}}{{UNIT}};',
+            ],
+        ]);
+
+        $this->add_responsive_control('card_padding', [
+            'label' => __('Padding', 'event-hub'),
+            'type' => Controls_Manager::DIMENSIONS,
+            'size_units' => ['px', 'em', '%'],
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card' => 'padding: {{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};',
+            ],
+        ]);
+
+        if (class_exists(Group_Control_Box_Shadow::class)) {
+            $this->add_group_control(Group_Control_Box_Shadow::get_type(), [
+                'name' => 'card_box_shadow',
+                'selector' => '{{WRAPPER}} .eh-session-card',
+            ]);
+        }
+
+        $this->end_controls_section();
+    }
+
+    private function register_typography_styles(): void
+    {
+        $this->start_controls_section('section_title_style', [
+            'label' => __('Titels', 'event-hub'),
+            'tab' => Controls_Manager::TAB_STYLE,
+        ]);
+
+        if (class_exists(Group_Control_Typography::class)) {
+            $this->add_group_control(Group_Control_Typography::get_type(), [
+                'name' => 'title_typography',
+                'selector' => '{{WRAPPER}} .eh-session-card h3, {{WRAPPER}} .eh-session-card h3 a',
+            ]);
+        }
+
+        $this->add_control('title_color', [
+            'label' => __('Tekstkleur', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card h3, {{WRAPPER}} .eh-session-card h3 a' => 'color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->end_controls_section();
+
+        $this->start_controls_section('section_meta_style', [
+            'label' => __('Meta & tekst', 'event-hub'),
+            'tab' => Controls_Manager::TAB_STYLE,
+        ]);
+
+        if (class_exists(Group_Control_Typography::class)) {
+            $this->add_group_control(Group_Control_Typography::get_type(), [
+                'name' => 'meta_typography',
+                'selector' => '{{WRAPPER}} .eh-session-card .eh-meta, {{WRAPPER}} .eh-session-card .eh-excerpt',
+            ]);
+        }
+
+        $this->add_control('meta_color', [
+            'label' => __('Metakleur', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-meta' => 'color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('excerpt_color', [
+            'label' => __('Samenvattingskleur', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-excerpt' => 'color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->end_controls_section();
+    }
+
+    private function register_button_styles(): void
+    {
+        $this->start_controls_section('section_button_style', [
+            'label' => __('Knop', 'event-hub'),
+            'tab' => Controls_Manager::TAB_STYLE,
+            'condition' => [
+                'show_button' => 'yes',
+            ],
+        ]);
+
+        if (class_exists(Group_Control_Typography::class)) {
+            $this->add_group_control(Group_Control_Typography::get_type(), [
+                'name' => 'button_typography',
+                'selector' => '{{WRAPPER}} .eh-session-card .eh-btn',
+            ]);
+        }
+
+        $this->start_controls_tabs('tabs_button_colors');
+
+        $this->start_controls_tab('tab_button_normal', [
+            'label' => __('Normaal', 'event-hub'),
+        ]);
+
+        $this->add_control('button_text_color', [
+            'label' => __('Tekst', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-btn' => 'color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('button_background_color', [
+            'label' => __('Achtergrond', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-btn' => 'background-color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->end_controls_tab();
+
+        $this->start_controls_tab('tab_button_hover', [
+            'label' => __('Hover', 'event-hub'),
+        ]);
+
+        $this->add_control('button_text_color_hover', [
+            'label' => __('Tekst', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-btn:hover' => 'color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('button_background_color_hover', [
+            'label' => __('Achtergrond', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-btn:hover' => 'background-color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->end_controls_tab();
+        $this->end_controls_tabs();
+
+        $this->add_responsive_control('button_border_radius', [
+            'label' => __('Hoekradius', 'event-hub'),
+            'type' => Controls_Manager::SLIDER,
+            'size_units' => ['px', '%'],
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-btn' => 'border-radius: {{SIZE}}{{UNIT}};',
+            ],
+        ]);
+
+        $this->add_responsive_control('button_padding', [
+            'label' => __('Padding', 'event-hub'),
+            'type' => Controls_Manager::DIMENSIONS,
+            'size_units' => ['px', 'em', '%'],
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-btn' => 'padding: {{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};',
+            ],
+        ]);
+
+        $this->end_controls_section();
+    }
+
+    private function register_badge_styles(): void
+    {
+        $this->start_controls_section('section_badge_style', [
+            'label' => __('Badges', 'event-hub'),
+            'tab' => Controls_Manager::TAB_STYLE,
+        ]);
+
+        if (class_exists(Group_Control_Typography::class)) {
+            $this->add_group_control(Group_Control_Typography::get_type(), [
+                'name' => 'badge_typography',
+                'selector' => '{{WRAPPER}} .eh-session-card .eh-badge',
+            ]);
+        }
+
+        $this->add_control('badge_corner', [
+            'label' => __('Hoekradius', 'event-hub'),
+            'type' => Controls_Manager::SLIDER,
+            'size_units' => ['px', '%'],
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-badge' => 'border-radius: {{SIZE}}{{UNIT}};',
+            ],
+        ]);
+
+        $this->add_control('badge_padding', [
+            'label' => __('Padding', 'event-hub'),
+            'type' => Controls_Manager::DIMENSIONS,
+            'size_units' => ['px', 'em', '%'],
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-badge' => 'padding: {{TOP}}{{UNIT}} {{RIGHT}}{{UNIT}} {{BOTTOM}}{{UNIT}} {{LEFT}}{{UNIT}};',
+            ],
+        ]);
+
+        $this->add_control('badge_available_color', [
+            'label' => __('Kleur beschikbaar', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-badge-available' => 'background-color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('badge_full_color', [
+            'label' => __('Kleur volzet', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-badge-full' => 'background-color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('badge_closed_color', [
+            'label' => __('Kleur gesloten', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-badge-closed' => 'background-color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('badge_cancelled_color', [
+            'label' => __('Kleur geannuleerd', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-card .eh-badge-cancelled' => 'background-color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->end_controls_section();
+    }
+
+    private function register_search_styles(): void
+    {
+        $this->start_controls_section('section_search_style', [
+            'label' => __('Zoek/filter', 'event-hub'),
+            'tab' => Controls_Manager::TAB_STYLE,
+            'condition' => [
+                'show_search' => 'yes',
+            ],
+        ]);
+
+        if (class_exists(Group_Control_Typography::class)) {
+            $this->add_group_control(Group_Control_Typography::get_type(), [
+                'name' => 'search_typography',
+                'selector' => '{{WRAPPER}} .eh-session-search input, {{WRAPPER}} .eh-session-search button',
+            ]);
+        }
+
+        $this->add_control('search_input_color', [
+            'label' => __('Tekstkleur veld', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-search input' => 'color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('search_input_background', [
+            'label' => __('Achtergrond veld', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-search input' => 'background-color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('search_input_border_color', [
+            'label' => __('Rand veld', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-search input' => 'border-color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('search_button_background', [
+            'label' => __('Knop achtergrond', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-search button' => 'background-color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('search_button_color', [
+            'label' => __('Knop tekst', 'event-hub'),
+            'type' => Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-session-search button' => 'color: {{VALUE}};',
+            ],
         ]);
 
         $this->end_controls_section();
@@ -233,7 +650,8 @@ class Widget_Session_List extends Widget_Base
             }
             wp_reset_postdata();
         } else {
-            echo '<p>' . esc_html__('Geen komende events gevonden.', 'event-hub') . '</p>';
+            $empty = !empty($settings['empty_state_text']) ? $settings['empty_state_text'] : __('Geen komende events gevonden.', 'event-hub');
+            echo '<p class="eh-empty-state">' . esc_html($empty) . '</p>';
         }
         echo '</div>';
 
@@ -257,9 +675,9 @@ class Widget_Session_List extends Widget_Base
 
         $badge = $this->get_status_badge($status, $is_full);
 
-        echo '<article class="eh-session-card">';
+        echo '<article class="eh-session-card" data-eventhub-session="' . esc_attr((string) $post_id) . '">';
         if (!empty($settings['show_availability']) && $settings['show_availability'] === 'yes' && $badge) {
-            echo '<span class="eh-badge ' . esc_attr($badge['class']) . '">' . esc_html($badge['label']) . '</span>';
+            echo '<span class="eh-badge ' . esc_attr($badge['class']) . '" data-eventhub-status>' . esc_html($badge['label']) . '</span>';
         }
         echo '<h3><a href="' . esc_url($permalink) . '">' . esc_html($title) . '</a></h3>';
         if ($date_label) {
@@ -275,13 +693,15 @@ class Widget_Session_List extends Widget_Base
             echo '<div class="eh-meta">' . wp_kses_post(nl2br($ticket_note)) . '</div>';
         }
         if (!empty($settings['show_availability']) && $settings['show_availability'] === 'yes' && $capacity > 0) {
-            echo '<div class="eh-meta">' . esc_html(sprintf(_n('%d plaats beschikbaar', '%d plaatsen beschikbaar', $available, 'event-hub'), $available)) . '</div>';
+            $availability_label = sprintf(_n('%d plaats beschikbaar', '%d plaatsen beschikbaar', $available, 'event-hub'), $available);
+            echo '<div class="eh-meta eh-availability" data-eventhub-availability>' . esc_html($availability_label) . '</div>';
         }
         if (!empty($settings['show_excerpt']) && $settings['show_excerpt'] === 'yes' && $excerpt) {
             echo '<p class="eh-excerpt">' . wp_kses_post($excerpt) . '</p>';
         }
         if (!empty($settings['show_button']) && $settings['show_button'] === 'yes') {
-            echo '<a class="eh-btn" style="background:' . esc_attr($color) . ';" href="' . esc_url($permalink) . '">' . esc_html__('Meer informatie', 'event-hub') . '</a>';
+            $button_label = !empty($settings['button_text']) ? $settings['button_text'] : __('Meer informatie', 'event-hub');
+            echo '<a class="eh-btn" data-eventhub-button style="background:' . esc_attr($color) . ';" href="' . esc_url($permalink) . '">' . esc_html($button_label) . '</a>';
         }
         echo '</article>';
     }
@@ -325,22 +745,27 @@ class Widget_Session_List extends Widget_Base
     private function inline_styles(): void
     {
         echo '<style>
-        .eh-session-search{margin-bottom:16px;display:flex;gap:8px}
-        .eh-session-search input{flex:1;padding:8px;border:1px solid #ddd;border-radius:4px}
-        .eh-session-search button{padding:8px 16px;border:0;background:#2271b1;color:#fff;border-radius:4px;cursor:pointer}
+        .eh-session-search{margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap}
+        .eh-session-search input{flex:1 1 220px;padding:10px 14px;border:1px solid #ddd;border-radius:4px;background:#fff}
+        .eh-session-search button{padding:10px 18px;border:0;background:#2271b1;color:#fff;border-radius:4px;cursor:pointer;font-weight:600;transition:background-color .2s ease}
+        .eh-session-search button:hover{background:#1c5b8c}
         .eh-session-list{display:grid;gap:16px}
         .eh-layout-card{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
         .eh-layout-list{grid-template-columns:1fr}
-        .eh-session-card{position:relative;border:1px solid #e0e0e0;border-radius:8px;padding:18px;box-shadow:0 2px 6px rgba(0,0,0,.03)}
-        .eh-session-card h3{margin:0 0 8px;font-size:20px}
+        .eh-session-card{position:relative;border:1px solid #e0e0e0;border-radius:8px;padding:18px;box-shadow:0 2px 6px rgba(0,0,0,.03);background:#fff;display:flex;flex-direction:column;gap:8px}
+        .eh-session-card h3{margin:0;font-size:20px}
         .eh-session-card .eh-meta{color:#555;font-size:14px;margin-bottom:6px}
         .eh-session-card .eh-excerpt{margin:12px 0 16px}
-        .eh-btn{display:inline-block;padding:8px 14px;border-radius:4px;color:#fff;text-decoration:none;font-weight:600}
+        .eh-session-card .eh-btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 16px;border-radius:4px;color:#fff;text-decoration:none;font-weight:600;transition:transform .2s ease,opacity .2s ease}
+        .eh-session-card .eh-btn:hover{opacity:.9;transform:translateY(-1px)}
+        .eh-session-card .eh-btn.is-disabled{opacity:.5;pointer-events:none}
         .eh-badge{position:absolute;top:14px;right:14px;padding:4px 10px;border-radius:4px;font-size:12px;color:#fff}
         .eh-badge-available{background:#2c9a3f}
         .eh-badge-full{background:#c62828}
+        .eh-badge-waitlist{background:#8a6df1}
         .eh-badge-closed{background:#666}
         .eh-badge-cancelled{background:#a0008f}
+        .eh-empty-state{text-align:center;padding:24px;color:#6d6d6d;background:#fafafa;border-radius:6px;border:1px dashed #e1e1e1}
         </style>';
     }
 }

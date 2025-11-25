@@ -1,0 +1,12 @@
+.eh-event-dashboard{max-width:1100px;margin-right:20px}
+.eh-dashboard-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:24px}
+.eh-dashboard-header h1{margin:0;font-size:26px}
+.eh-dashboard-header h2{margin:6px 0 0;color:#64748b;font-size:18px;font-weight:500}
+.eh-dashboard-actions{display:flex;gap:10px;flex-wrap:wrap}
+.eh-grid.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:32px}
+.eh-card.stat{background:#fff;border:1px solid #e5e7f1;border-radius:14px;padding:18px;box-shadow:0 15px 35px rgba(15,23,42,.05)}
+.eh-card.stat h3{margin:0;color:#64748b;font-size:13px;text-transform:uppercase;letter-spacing:.04em}
+.eh-card.stat p{margin:12px 0 0;font-size:22px;font-weight:600;color:#0f172a}
+.eh-section-title{margin-top:40px}
+.eh-table th,.eh-table td{vertical-align:middle}
+.eh-table td a{color:#2271b1}

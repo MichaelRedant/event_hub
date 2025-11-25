@@ -1,0 +1,31 @@
+.post-type-eh_session .wrap > h1{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+}
+.post-type-eh_session .page-title-action{
+    border-radius:999px;
+    padding:6px 16px;
+    box-shadow:0 4px 14px rgba(15,23,42,.15);
+}
+.post-type-eh_session .tablenav.top{
+    background:#fff;
+    border:1px solid #e6e9f0;
+    border-radius:14px;
+    padding:10px 16px;
+    box-shadow:0 10px 30px rgba(15,23,42,.04);
+}
+.post-type-eh_session .widefat th{
+    background:#f8fafc;
+    color:#475569;
+    font-size:12px;
+    letter-spacing:.05em;
+    text-transform:uppercase;
+}
+.post-type-eh_session .widefat td a.row-title{
+    font-weight:600;
+    color:#0f172a;
+}
+.post-type-eh_session .row-actions .edit a{
+    color:#2563eb;
+}

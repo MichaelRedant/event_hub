@@ -157,7 +157,7 @@ class Settings
         add_options_page(
             __('Event Hub e-mails', 'event-hub'),
             __('Event Hub e-mails', 'event-hub'),
-            'manage_options',
+            'edit_posts',
             self::OPTION,
             [$this, 'render_page']
         );
@@ -165,7 +165,7 @@ class Settings
 
     public function render_page(): void
     {
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can('edit_posts')) {
             wp_die(__('Je hebt geen rechten om deze pagina te openen.', 'event-hub'));
         }
         echo '<div class="wrap">';
