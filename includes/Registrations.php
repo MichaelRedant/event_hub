@@ -79,6 +79,11 @@ class Registrations
         if (!$is_admin && !in_array($session_status, ['open', 'full'], true)) {
             return new \WP_Error('event_closed', __('Dit event accepteert momenteel geen inschrijvingen.', 'event-hub'));
         }
+        $enable_module_meta = get_post_meta((int) $data['session_id'], '_eh_enable_module', true);
+        $module_enabled = ($enable_module_meta === '') ? true : (bool) $enable_module_meta;
+        if (!$is_admin && !$module_enabled) {
+            return new \WP_Error('module_disabled', __('Dit event accepteert geen inschrijvingen.', 'event-hub'));
+        }
 
         // CAPTCHA check
         if (!$is_admin && \EventHub\Security::captcha_enabled()) {
@@ -139,6 +144,8 @@ class Registrations
         $this->sync_session_status((int) $data['session_id']);
         if (($data['status'] ?? '') !== 'waitlist') {
             do_action('event_hub_registration_created', $id);
+        } else {
+            do_action('event_hub_waitlist_created', $id);
         }
         return $id;
     }
@@ -268,6 +275,20 @@ class Registrations
     }
 
     /**
+     * Count people currently on the waitlist.
+     */
+    public function count_waitlist(int $session_id): int
+    {
+        global $wpdb;
+        $sql = $wpdb->prepare(
+            "SELECT COALESCE(SUM(people_count),0) FROM {$this->table} WHERE session_id = %d AND status = %s",
+            $session_id,
+            'waitlist'
+        );
+        return (int) $wpdb->get_var($sql);
+    }
+
+    /**
      * Check if new registration can be accepted given capacity.
      */
     public function can_register(int $session_id, int $people = 1): bool
@@ -323,18 +344,20 @@ class Registrations
     /**
      * Bepaal capaciteit/boekingen voor een sessie.
      *
-     * @return array{capacity:int, booked:int, available:int, is_full:bool}
+     * @return array{capacity:int, booked:int, available:int, is_full:bool, waitlist:int}
      */
     public function get_capacity_state(int $session_id): array
     {
         $capacity = (int) get_post_meta($session_id, '_eh_capacity', true);
         $booked = $this->count_booked($session_id);
+        $waitlist = $this->count_waitlist($session_id);
         if ($capacity <= 0) {
             return [
                 'capacity' => 0,
                 'booked' => $booked,
                 'available' => 0,
                 'is_full' => false,
+                'waitlist' => $waitlist,
             ];
         }
         $available = max(0, $capacity - $booked);
@@ -343,10 +366,11 @@ class Registrations
             'booked' => $booked,
             'available' => $available,
             'is_full' => $available <= 0,
+            'waitlist' => $waitlist,
         ];
     }
 
-    private function sync_session_status(int $session_id): void
+    public function sync_session_status(int $session_id): void
     {
         $capacity = (int) get_post_meta($session_id, '_eh_capacity', true);
         $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';

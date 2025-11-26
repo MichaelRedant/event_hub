@@ -66,7 +66,18 @@ class CPT_Email
         echo '<input type="text" class="regular-text" name="_eh_email_subject" value="' . esc_attr((string) $subject) . '" /></p>';
 
         echo '<p><label><strong>' . esc_html__('Inhoud', 'event-hub') . '</strong></label><br/>';
-        echo '<textarea class="large-text code" rows="10" name="_eh_email_body">' . esc_textarea((string) $body) . '</textarea>';
+        wp_editor(
+            (string) $body,
+            'eh_email_body_editor',
+            [
+                'textarea_name' => '_eh_email_body',
+                'textarea_rows' => 12,
+                'media_buttons' => false,
+                'teeny'         => false,
+                'tinymce'       => true,
+                'quicktags'     => true,
+            ]
+        );
 
         $placeholders = \EventHub\Emails::get_placeholder_reference();
         echo '<details class="eh-placeholder-panel"><summary>' . esc_html__('Beschikbare placeholders', 'event-hub') . '</summary><ul>';

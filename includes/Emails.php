@@ -60,6 +60,7 @@ class Emails
         add_action('event_hub_send_reminder', [$this, 'send_reminder'], 10, 1);
         add_action('event_hub_send_followup', [$this, 'send_followup'], 10, 1);
         add_action('event_hub_waitlist_promoted', [$this, 'send_waitlist_promotion'], 10, 1);
+        $this->maybe_force_php_transport();
     }
 
     public function handle_registration_created(int $registration_id): void
@@ -77,7 +78,8 @@ class Emails
         // Schedule reminder X days before start
         if ($start) {
             $ts = strtotime($start);
-            $days = isset($opts['reminder_offset_days']) ? (int) $opts['reminder_offset_days'] : 3;
+            $event_days = get_post_meta($session_id, '_eh_reminder_offset_days', true);
+            $days = ($event_days === '' || $event_days === null) ? (int) ($opts['reminder_offset_days'] ?? 3) : (int) $event_days;
             $reminder_ts = $ts - ($days * DAY_IN_SECONDS);
             if ($reminder_ts > time()) {
                 wp_schedule_single_event($reminder_ts, 'event_hub_send_reminder', [$registration_id]);
@@ -88,7 +90,8 @@ class Emails
         $base = $end ?: $start;
         if ($base) {
             $ts = strtotime($base);
-            $hours = isset($opts['followup_offset_hours']) ? (int) $opts['followup_offset_hours'] : 24;
+            $event_hours = get_post_meta($session_id, '_eh_followup_offset_hours', true);
+            $hours = ($event_hours === '' || $event_hours === null) ? (int) ($opts['followup_offset_hours'] ?? 24) : (int) $event_hours;
             $follow_ts = $ts + ($hours * HOUR_IN_SECONDS);
             if ($follow_ts > time()) {
                 wp_schedule_single_event($follow_ts, 'event_hub_send_followup', [$registration_id]);
@@ -101,6 +104,12 @@ class Emails
         $reg = $this->registrations->get_registration($registration_id);
         if (!$reg) { return; }
         $session_id = (int) $reg['session_id'];
+        $custom_subj = get_post_meta($session_id, '_eh_email_custom_confirmation_subject', true);
+        $custom_body = get_post_meta($session_id, '_eh_email_custom_confirmation_body', true);
+        if ($custom_subj !== '' && $custom_body !== '') {
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'confirmation_custom');
+            return;
+        }
         $tpl_ids = (array) get_post_meta($session_id, '_eh_email_confirm_templates', true);
         foreach ($tpl_ids as $tpl_id) {
             $subject = (string) get_post_meta((int)$tpl_id, '_eh_email_subject', true);
@@ -120,6 +129,12 @@ class Emails
         if (!in_array($reg['status'], ['registered','confirmed'], true)) { return; }
 
         $session_id = (int) $reg['session_id'];
+        $custom_subj = get_post_meta($session_id, '_eh_email_custom_reminder_subject', true);
+        $custom_body = get_post_meta($session_id, '_eh_email_custom_reminder_body', true);
+        if ($custom_subj !== '' && $custom_body !== '') {
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'reminder_custom');
+            return;
+        }
         $tpl_ids = (array) get_post_meta($session_id, '_eh_email_reminder_templates', true);
         foreach (array_filter($tpl_ids) as $tpl_id) {
             $subject = (string) get_post_meta((int)$tpl_id, '_eh_email_subject', true);
@@ -133,6 +148,12 @@ class Emails
         $reg = $this->registrations->get_registration($registration_id);
         if (!$reg) { return; }
         $session_id = (int) $reg['session_id'];
+        $custom_subj = get_post_meta($session_id, '_eh_email_custom_followup_subject', true);
+        $custom_body = get_post_meta($session_id, '_eh_email_custom_followup_body', true);
+        if ($custom_subj !== '' && $custom_body !== '') {
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'followup_custom');
+            return;
+        }
         $tpl_ids = (array) get_post_meta($session_id, '_eh_email_followup_templates', true);
         foreach (array_filter($tpl_ids) as $tpl_id) {
             $subject = (string) get_post_meta((int)$tpl_id, '_eh_email_subject', true);
@@ -146,6 +167,12 @@ class Emails
         $reg = $this->registrations->get_registration($registration_id);
         if (!$reg) { return; }
         $session_id = (int) $reg['session_id'];
+        $custom_subj = get_post_meta($session_id, '_eh_email_custom_waitlist_promotion_subject', true);
+        $custom_body = get_post_meta($session_id, '_eh_email_custom_waitlist_promotion_body', true);
+        if ($custom_subj !== '' && $custom_body !== '') {
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'waitlist_promotion_custom');
+            return;
+        }
         $tpl_ids = (array) get_post_meta($session_id, '_eh_email_waitlist_templates', true);
         if (!$tpl_ids) {
             return;
@@ -154,6 +181,25 @@ class Emails
             $subject = (string) get_post_meta((int) $tpl_id, '_eh_email_subject', true);
             $body    = (string) get_post_meta((int) $tpl_id, '_eh_email_body', true);
             $this->send_mail_with_placeholders($reg, $subject, $body, 'waitlist_promotion');
+        }
+    }
+
+    public function send_waitlist_created(int $registration_id): void
+    {
+        $reg = $this->registrations->get_registration($registration_id);
+        if (!$reg) { return; }
+        $session_id = (int) $reg['session_id'];
+        $custom_subj = get_post_meta($session_id, '_eh_email_custom_waitlist_subject', true);
+        $custom_body = get_post_meta($session_id, '_eh_email_custom_waitlist_body', true);
+        if ($custom_subj !== '' && $custom_body !== '') {
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'waitlist_custom');
+            return;
+        }
+        $tpl_ids = (array) get_post_meta($session_id, '_eh_email_waitlist_templates', true);
+        foreach (array_filter($tpl_ids) as $tpl_id) {
+            $subject = (string) get_post_meta((int)$tpl_id, '_eh_email_subject', true);
+            $body    = (string) get_post_meta((int)$tpl_id, '_eh_email_body', true);
+            $this->send_mail_with_placeholders($reg, $subject, $body, 'waitlist');
         }
     }
 
@@ -168,10 +214,13 @@ class Emails
         $subject_f = strtr($subject, $replacements);
         $body_f    = strtr($body, $replacements);
 
-        $headers = ['Content-Type: text/plain; charset=UTF-8'];
+        $headers = ['Content-Type: text/html; charset=UTF-8'];
         $opts = get_option(Settings::OPTION, []);
         $from_name  = $opts['from_name'] ?? get_bloginfo('name');
         $from_email = $opts['from_email'] ?? get_option('admin_email');
+
+        // Ensure alignment of sender headers for better deliverability.
+        $headers[] = 'Reply-To: ' . $from_name . ' <' . $from_email . '>';
 
         $filter_from = static function () use ($from_email) { return $from_email; };
         $filter_name = static function () use ($from_name)  { return $from_name; };
@@ -298,6 +347,22 @@ class Emails
         }
 
         return $map;
+    }
+
+    /**
+     * Force PHP mail transport when selected, bypassing SMTP overrides.
+     */
+    private function maybe_force_php_transport(): void
+    {
+        $opts = Settings::get_email_settings();
+        if (($opts['mail_transport'] ?? 'php') !== 'php') {
+            return;
+        }
+        add_action('phpmailer_init', static function ($phpmailer) {
+            if (is_object($phpmailer) && method_exists($phpmailer, 'isMail')) {
+                $phpmailer->isMail();
+            }
+        }, 1);
     }
 }
 

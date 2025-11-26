@@ -88,6 +88,14 @@ class Admin_Menus
             'event-hub-event',
             [$this, 'render_event_dashboard']
         );
+        add_submenu_page(
+            'event-hub',
+            __('Statistieken', 'event-hub'),
+            __('Statistieken', 'event-hub'),
+            'edit_posts',
+            'event-hub-stats',
+            [$this, 'render_stats_page']
+        );
         add_action('admin_head', static function () {
             remove_submenu_page('event-hub', 'event-hub-event');
         });
@@ -134,7 +142,7 @@ class Admin_Menus
             wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
         }
 
-        echo '<div class="wrap">';
+        echo '<div class="wrap eh-admin">';
         echo '<h1>' . esc_html__('Eventkalender', 'event-hub') . '</h1>';
         echo '<p>' . esc_html__('Bekijk al je events in één oogopslag. Klik op een event om het in een nieuw tabblad te openen.', 'event-hub') . '</p>';
         echo '<div id="eh-admin-calendar" style="background:#fff;border:1px solid #ddd;border-radius:6px;padding:12px;"></div>';
@@ -196,7 +204,7 @@ class Admin_Menus
             ]);
         }
 
-        if ($page === 'event-hub-event') {
+        if (in_array($page, ['event-hub-event','event-hub-stats'], true)) {
             wp_enqueue_style(
                 'event-hub-dashboard',
                 EVENT_HUB_URL . 'assets/css/admin-dashboard.css',
@@ -216,6 +224,143 @@ class Admin_Menus
                 );
             }
         }
+    }
+
+    public function render_stats_page(): void
+    {
+        if (!current_user_can('edit_posts')) {
+            wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
+        }
+
+        $range_start = isset($_GET['eh_stats_start']) ? sanitize_text_field((string) $_GET['eh_stats_start']) : '';
+        $range_end   = isset($_GET['eh_stats_end']) ? sanitize_text_field((string) $_GET['eh_stats_end']) : '';
+
+        $start_ts = $range_start ? strtotime($range_start . ' 00:00:00') : strtotime('-30 days');
+        $end_ts   = $range_end ? strtotime($range_end . ' 23:59:59') : time();
+
+        if (!$start_ts || !$end_ts || $start_ts > $end_ts) {
+            $start_ts = strtotime('-30 days');
+            $end_ts = time();
+        }
+
+        $stats = $this->collect_stats($start_ts, $end_ts);
+
+        echo '<div class="wrap eh-admin">';
+        echo '<h1>' . esc_html__('Event Hub - Statistieken', 'event-hub') . '</h1>';
+        echo '<form method="get" class="eh-filter-bar" style="margin-top:16px;margin-bottom:12px;">';
+        echo '<input type="hidden" name="page" value="event-hub-stats">';
+        echo '<label>' . esc_html__('Start', 'event-hub') . '<br><input type="date" name="eh_stats_start" value="' . esc_attr(date('Y-m-d', $start_ts)) . '"></label>';
+        echo '<label>' . esc_html__('Einde', 'event-hub') . '<br><input type="date" name="eh_stats_end" value="' . esc_attr(date('Y-m-d', $end_ts)) . '"></label>';
+        submit_button(__('Filter', 'event-hub'), 'primary', '', false);
+        echo '</form>';
+
+        echo '<div class="eh-grid stats">';
+        $cards = [
+            ['label' => __('Nieuwe inschrijvingen', 'event-hub'), 'value' => (string) $stats['registrations']],
+            ['label' => __('Bevestigd', 'event-hub'), 'value' => (string) $stats['confirmed']],
+            ['label' => __('Wachtlijst', 'event-hub'), 'value' => (string) $stats['waitlist']],
+            ['label' => __('Events in periode', 'event-hub'), 'value' => (string) $stats['events']],
+            ['label' => __('Verzonden mails (template)', 'event-hub'), 'value' => (string) $stats['template_mails']],
+        ];
+        foreach ($cards as $card) {
+            echo '<div class="eh-card stat"><h3>' . esc_html($card['label']) . '</h3><p>' . esc_html($card['value']) . '</p></div>';
+        }
+        echo '</div>';
+
+        echo '<div class="eh-panel">';
+        echo '<div class="eh-panel__head"><h2>' . esc_html__('Top events (registraties)', 'event-hub') . '</h2></div>';
+        echo '<table class="widefat fixed striped eh-table-card"><thead><tr>';
+        echo '<th>' . esc_html__('Event', 'event-hub') . '</th><th>' . esc_html__('# regs', 'event-hub') . '</th><th>' . esc_html__('# wachtlijst', 'event-hub') . '</th>';
+        echo '</tr></thead><tbody>';
+        if (!$stats['top_events']) {
+            echo '<tr><td colspan="3">' . esc_html__('Geen data in deze periode.', 'event-hub') . '</td></tr>';
+        } else {
+            foreach ($stats['top_events'] as $row) {
+                $edit = get_edit_post_link($row['id']);
+                echo '<tr>';
+                echo '<td><a href="' . esc_url($edit) . '">' . esc_html($row['title']) . '</a></td>';
+                echo '<td>' . esc_html((string) $row['regs']) . '</td>';
+                echo '<td>' . esc_html((string) $row['waitlist']) . '</td>';
+                echo '</tr>';
+            }
+        }
+        echo '</tbody></table>';
+        echo '</div>';
+
+        echo '</div>';
+    }
+
+    private function collect_stats(int $start_ts, int $end_ts): array
+    {
+        global $wpdb;
+        $registrations_table = $wpdb->prefix . Registrations::TABLE;
+
+        $start = gmdate('Y-m-d H:i:s', $start_ts);
+        $end   = gmdate('Y-m-d H:i:s', $end_ts);
+
+        $regs = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN %s AND %s",
+            $start,
+            $end
+        ));
+        $confirmed = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN %s AND %s AND status = 'confirmed'",
+            $start,
+            $end
+        ));
+        $waitlist = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN %s AND %s AND status = 'waitlist'",
+            $start,
+            $end
+        ));
+
+        $events = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = %s AND post_status = 'publish' AND post_date BETWEEN %s AND %s",
+            Settings::get_cpt_slug(),
+            $start,
+            $end
+        ));
+
+        // Template mails sent (logged via event_hub_email_sent)
+        $template_mails = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_eh_email_log_time' AND meta_value BETWEEN %s AND %s",
+            $start,
+            $end
+        ));
+
+        // Top events by registrations in range
+        $top_rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT session_id, 
+                SUM(CASE WHEN status = 'waitlist' THEN 1 ELSE 0 END) AS waitlist,
+                COUNT(*) AS regs
+             FROM {$registrations_table}
+             WHERE created_at BETWEEN %s AND %s
+             GROUP BY session_id
+             ORDER BY regs DESC
+             LIMIT 5",
+            $start,
+            $end
+        ), ARRAY_A) ?: [];
+
+        $top_events = [];
+        foreach ($top_rows as $row) {
+            $title = get_the_title((int) $row['session_id']);
+            $top_events[] = [
+                'id' => (int) $row['session_id'],
+                'title' => $title ?: __('Onbekend event', 'event-hub'),
+                'regs' => (int) $row['regs'],
+                'waitlist' => (int) $row['waitlist'],
+            ];
+        }
+
+        return [
+            'registrations' => $regs,
+            'confirmed' => $confirmed,
+            'waitlist' => $waitlist,
+            'events' => $events,
+            'template_mails' => $template_mails,
+            'top_events' => $top_events,
+        ];
     }
 
     public function render_registrations_page(): void
@@ -239,7 +384,8 @@ class Admin_Menus
         if (isset($_GET['download']) && $_GET['download'] === 'csv') {
             $session_id = isset($_GET['session_id']) ? (int) $_GET['session_id'] : 0;
             $status = isset($_GET['status']) ? sanitize_text_field((string) $_GET['status']) : '';
-            $this->export_registrations_csv($session_id, $status);
+            $name = isset($_GET['name']) ? sanitize_text_field((string) $_GET['name']) : '';
+            $this->export_registrations_csv($session_id, $status, $name);
             return;
         }
 
@@ -262,6 +408,7 @@ class Admin_Menus
     {
         $session_id = isset($_GET['session_id']) ? (int) $_GET['session_id'] : 0;
         $status     = isset($_GET['status']) ? sanitize_text_field((string) $_GET['status']) : '';
+        $name       = isset($_GET['name']) ? sanitize_text_field((string) $_GET['name']) : '';
 
         $sessions = get_posts([
             'post_type'   => Settings::get_cpt_slug(),
@@ -270,7 +417,7 @@ class Admin_Menus
             'order'       => 'ASC',
         ]);
 
-        echo '<div class="wrap">';
+        echo '<div class="wrap eh-admin">';
         $new_url = add_query_arg(
             [
                 'page' => 'event-hub-registrations',
@@ -300,11 +447,12 @@ class Admin_Menus
             echo '<option value="' . esc_attr($key) . '"' . selected($status, $key, false) . '>' . esc_html($label) . '</option>';
         }
         echo '</select>';
+        echo '<input type="text" name="name" placeholder="' . esc_attr__('Zoek op naam', 'event-hub') . '" value="' . esc_attr($name) . '" />';
         submit_button(__('Filteren', 'event-hub'), 'primary', '', false);
         echo '<button type="submit" name="download" value="csv" class="button button-secondary">' . esc_html__('Exporteer CSV', 'event-hub') . '</button>';
         echo '</form>';
 
-        $registrations = $this->fetch_registrations($session_id, $status);
+        $registrations = $this->fetch_registrations($session_id, $status, $name);
 
         echo '<div class="eh-table-wrap">';
         echo '<table class="widefat fixed striped">';
@@ -379,7 +527,7 @@ class Admin_Menus
         echo '</div>';
     }
 
-    private function fetch_registrations(int $session_id, string $status): array
+    private function fetch_registrations(int $session_id, string $status, string $name = ''): array
     {
         if ($session_id > 0) {
             $registrations = $this->registrations->get_registrations_by_session($session_id);
@@ -389,12 +537,19 @@ class Admin_Menus
             $registrations = $wpdb->get_results("SELECT * FROM {$table} ORDER BY created_at DESC LIMIT 100", ARRAY_A) ?: [];
         }
 
-        if ($status !== '') {
-            $registrations = array_values(array_filter(
-                $registrations,
-                static fn ($row) => isset($row['status']) && $row['status'] === $status
-            ));
-        }
+        $registrations = array_values(array_filter(
+            $registrations,
+            static function ($row) use ($status, $name): bool {
+                if ($status !== '' && (!isset($row['status']) || $row['status'] !== $status)) {
+                    return false;
+                }
+                if ($name !== '') {
+                    $full = strtolower(trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? '')));
+                    return str_contains($full, strtolower($name));
+                }
+                return true;
+            }
+        ));
 
         return $registrations;
     }
@@ -463,7 +618,7 @@ class Admin_Menus
             }
         }
 
-        echo '<div class="wrap">';
+        echo '<div class="wrap eh-admin">';
         echo '<h1>' . esc_html__('Inschrijving bewerken', 'event-hub') . '</h1>';
         echo '<form method="post">';
         wp_nonce_field('eh_edit_registration_' . $id, 'eh_edit_registration_nonce');
@@ -537,7 +692,7 @@ class Admin_Menus
         ]);
 
         if (!$sessions) {
-            echo '<div class="wrap"><div class="notice notice-warning"><p>' . esc_html__('Maak eerst een event aan om inschrijvingen toe te voegen.', 'event-hub') . '</p></div></div>';
+        echo '<div class="wrap eh-admin"><div class="notice notice-warning"><p>' . esc_html__('Maak eerst een event aan om inschrijvingen toe te voegen.', 'event-hub') . '</p></div></div>';
             return;
         }
 
@@ -676,6 +831,7 @@ class Admin_Menus
             'cancelled'  => __('Geannuleerd', 'event-hub'),
             'attended'   => __('Aanwezig', 'event-hub'),
             'no_show'    => __('Niet opgedaagd', 'event-hub'),
+            'waitlist'   => __('Wachtlijst', 'event-hub'),
         ];
     }
 
@@ -719,7 +875,13 @@ class Admin_Menus
                 'title' => $post->post_title,
                 'start' => date('c', strtotime($date_start)),
                 'end' => $date_end ? date('c', strtotime($date_end)) : null,
-                'url' => get_edit_post_link($post->ID, 'raw'),
+                'url' => add_query_arg(
+                    [
+                        'page' => 'event-hub-event',
+                        'event_id' => $post->ID,
+                    ],
+                    admin_url('admin.php')
+                ),
                 'backgroundColor' => $color,
                 'borderColor' => $color,
                 'classNames' => ['eh-status-' . sanitize_html_class($status)],
@@ -733,7 +895,7 @@ class Admin_Menus
         wp_send_json_success($events);
     }
 
-    private function export_registrations_csv(int $session_id, string $status): void
+    private function export_registrations_csv(int $session_id, string $status, string $name): void
     {
         if (!isset($_GET['download_nonce']) || !wp_verify_nonce(sanitize_text_field((string) $_GET['download_nonce']), 'eh_reg_export')) {
             wp_die(__('Ongeldige exportaanvraag.', 'event-hub'));
@@ -742,7 +904,7 @@ class Admin_Menus
             wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
         }
 
-        $rows = $this->fetch_registrations($session_id, $status);
+        $rows = $this->fetch_registrations($session_id, $status, $name);
         nocache_headers();
         header('Content-Type: text/csv; charset=utf-8');
         header('Content-Disposition: attachment; filename="event-hub-registraties-' . gmdate('Ymd-His') . '.csv"');
@@ -793,7 +955,7 @@ class Admin_Menus
         }
         $event_id = isset($_GET['event_id']) ? (int) $_GET['event_id'] : 0;
         if (!$event_id) {
-            echo '<div class="wrap"><div class="notice notice-error"><p>' . esc_html__('Event niet gevonden.', 'event-hub') . '</p></div></div>';
+            echo '<div class="wrap eh-admin"><div class="notice notice-error"><p>' . esc_html__('Event niet gevonden.', 'event-hub') . '</p></div></div>';
             return;
         }
         if (isset($_GET['download'], $_GET['nonce']) && $_GET['download'] === 'csv') {
@@ -803,11 +965,20 @@ class Admin_Menus
 
         $event = get_post($event_id);
         if (!$event || $event->post_type !== Settings::get_cpt_slug()) {
-            echo '<div class="wrap"><div class="notice notice-error"><p>' . esc_html__('Event niet gevonden.', 'event-hub') . '</p></div></div>';
+            echo '<div class="wrap eh-admin"><div class="notice notice-error"><p>' . esc_html__('Event niet gevonden.', 'event-hub') . '</p></div></div>';
             return;
         }
 
         $registrations = $this->registrations->get_registrations_by_session($event_id);
+        $search = isset($_GET['eh_search']) ? sanitize_text_field((string) $_GET['eh_search']) : '';
+        if ($search !== '') {
+            $needle = strtolower($search);
+            $registrations = array_values(array_filter($registrations, static function ($row) use ($needle): bool {
+                $name = strtolower(trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? '')));
+                $email = strtolower($row['email'] ?? '');
+                return str_contains($name, $needle) || str_contains($email, $needle);
+            }));
+        }
         $waitlist_regs = array_values(array_filter($registrations, static fn($row) => ($row['status'] ?? '') === 'waitlist'));
         $active_regs = array_values(array_filter($registrations, static fn($row) => ($row['status'] ?? '') !== 'waitlist'));
         $state = $this->registrations->get_capacity_state($event_id);
@@ -848,6 +1019,10 @@ class Admin_Menus
             } elseif ($notice === 'individual_error') {
                 $class = 'notice-error';
                 $message = __('E-mail versturen mislukt.', 'event-hub');
+            } elseif ($notice === 'reg_updated') {
+                $message = __('Registratie bijgewerkt.', 'event-hub');
+            } elseif ($notice === 'reg_deleted') {
+                $message = __('Registratie verwijderd.', 'event-hub');
             }
             if ($message) {
                 echo '<div class="notice ' . esc_attr($class) . ' is-dismissible"><p>' . esc_html($message) . '</p></div>';
@@ -896,11 +1071,26 @@ class Admin_Menus
         }
         echo '</div>';
 
-        echo '<h2 class="eh-section-title">' . esc_html__('Deelnemers', 'event-hub') . '</h2>';
+        // Search/filter bar for participants and waitlist
+        $search_query = $search ?: '';
+        echo '<form method="get" action="' . esc_url(admin_url('admin.php')) . '" class="eh-filter-bar" style="margin-top:12px">';
+        echo '<input type="hidden" name="page" value="event-hub-event">';
+        echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+        echo '<input type="search" name="eh_search" placeholder="' . esc_attr__('Zoek op naam of e-mail', 'event-hub') . '" value="' . esc_attr($search_query) . '" style="min-width:240px">';
+        submit_button(__('Zoeken', 'event-hub'), 'secondary', '', false);
+        if ($search_query !== '') {
+            echo '<a class="button" href="' . esc_url(remove_query_arg('eh_search')) . '">' . esc_html__('Reset', 'event-hub') . '</a>';
+        }
+        echo '</form>';
+
+        $statuses = $this->get_status_labels();
+
+        echo '<div class="eh-panel">';
+        echo '<div class="eh-panel__head"><h2>' . esc_html__('Deelnemers', 'event-hub') . '</h2></div>';
         if (!$active_regs) {
             echo '<p>' . esc_html__('Nog geen inschrijvingen.', 'event-hub') . '</p>';
         } else {
-            echo '<table class="widefat fixed striped eh-table">';
+            echo '<table class="widefat fixed striped eh-table eh-table-card">';
             echo '<thead><tr>';
             $cols = [
                 __('Naam', 'event-hub'),
@@ -917,6 +1107,8 @@ class Admin_Menus
             }
             echo '</tr></thead><tbody>';
             foreach ($active_regs as $row) {
+                $reg_id = (int) ($row['id'] ?? 0);
+                $current_status = $row['status'] ?? '';
                 echo '<tr>';
                 echo '<td>' . esc_html(trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''))) . '</td>';
                 echo '<td><a href="mailto:' . esc_attr($row['email']) . '">' . esc_html($row['email']) . '</a></td>';
@@ -926,11 +1118,23 @@ class Admin_Menus
                 echo '<td>' . esc_html(ucfirst($row['status'] ?? '')) . '</td>';
                 echo '<td>' . esc_html(date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($row['created_at']))) . '</td>';
                 echo '<td>';
+                echo '<form method="post" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+                wp_nonce_field('eh_event_dashboard_action_' . $event_id, 'eh_event_dashboard_nonce');
+                echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+                echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $reg_id) . '">';
+                echo '<input type="hidden" name="eh_dashboard_action" value="update_status">';
+                echo '<select name="new_status">';
+                foreach ($statuses as $key => $label) {
+                    echo '<option value="' . esc_attr($key) . '"' . selected($current_status, $key, false) . '>' . esc_html($label) . '</option>';
+                }
+                echo '</select>';
+                echo '<button class="button button-small" type="submit">' . esc_html__('Opslaan', 'event-hub') . '</button>';
+                echo '</form>';
                 if ($templates) {
-                    echo '<form method="post" class="eh-individual-mail">';
+                    echo '<form method="post" class="eh-individual-mail" style="margin-top:6px;">';
                     wp_nonce_field('eh_event_individual_mail_' . $event_id, 'eh_event_individual_mail_nonce');
                     echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
-                    echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $row['id']) . '">';
+                    echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $reg_id) . '">';
                     echo '<select name="individual_template_id">';
                     echo '<option value="">' . esc_html__('Kies sjabloon', 'event-hub') . '</option>';
                     foreach ($templates as $tpl) {
@@ -942,17 +1146,26 @@ class Admin_Menus
                 } else {
                     esc_html_e('Geen sjablonen beschikbaar.', 'event-hub');
                 }
+                echo '<form method="post" style="margin-top:6px;" onsubmit="return confirm(\'' . esc_js(__('Deze inschrijving verwijderen?', 'event-hub')) . '\');">';
+                wp_nonce_field('eh_event_dashboard_action_' . $event_id, 'eh_event_dashboard_nonce');
+                echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+                echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $reg_id) . '">';
+                echo '<input type="hidden" name="eh_dashboard_action" value="delete_registration">';
+                echo '<button class="button button-small" type="submit">' . esc_html__('Verwijderen', 'event-hub') . '</button>';
+                echo '</form>';
                 echo '</td>';
                 echo '</tr>';
             }
             echo '</tbody></table>';
         }
+        echo '</div>';
 
-        echo '<h2 class="eh-section-title">' . esc_html__('Wachtlijst', 'event-hub') . '</h2>';
+        echo '<div class="eh-panel">';
+        echo '<div class="eh-panel__head"><h2>' . esc_html__('Wachtlijst', 'event-hub') . '</h2></div>';
         if (!$waitlist_regs) {
             echo '<p>' . esc_html__('Er staan momenteel geen mensen op de wachtlijst.', 'event-hub') . '</p>';
         } else {
-            echo '<table class="widefat fixed striped eh-table">';
+            echo '<table class="widefat fixed striped eh-table eh-table-card">';
             echo '<thead><tr>';
             $wait_cols = [
                 __('Naam', 'event-hub'),
@@ -960,22 +1173,50 @@ class Admin_Menus
                 __('Telefoon', 'event-hub'),
                 __('Personen', 'event-hub'),
                 __('Sinds', 'event-hub'),
+                __('Acties', 'event-hub'),
             ];
             foreach ($wait_cols as $col) {
                 echo '<th>' . esc_html($col) . '</th>';
             }
             echo '</tr></thead><tbody>';
             foreach ($waitlist_regs as $row) {
+                $reg_id = (int) ($row['id'] ?? 0);
                 echo '<tr>';
                 echo '<td>' . esc_html(trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''))) . '</td>';
                 echo '<td><a href="mailto:' . esc_attr($row['email']) . '">' . esc_html($row['email']) . '</a></td>';
                 echo '<td>' . esc_html($row['phone'] ?? '') . '</td>';
                 echo '<td>' . esc_html((string) ($row['people_count'] ?? 1)) . '</td>';
                 echo '<td>' . esc_html(date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($row['created_at']))) . '</td>';
+                echo '<td>';
+                echo '<form method="post" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+                wp_nonce_field('eh_event_dashboard_action_' . $event_id, 'eh_event_dashboard_nonce');
+                echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+                echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $reg_id) . '">';
+                echo '<input type="hidden" name="eh_dashboard_action" value="promote_waitlist">';
+                echo '<select name="new_status">';
+                $promotion_statuses = [
+                    'registered' => __('Geregistreerd', 'event-hub'),
+                    'confirmed'  => __('Bevestigd', 'event-hub'),
+                ];
+                foreach ($promotion_statuses as $key => $label) {
+                    echo '<option value="' . esc_attr($key) . '">' . esc_html($label) . '</option>';
+                }
+                echo '</select>';
+                echo '<button class="button button-small" type="submit">' . esc_html__('Promoveren', 'event-hub') . '</button>';
+                echo '</form>';
+                echo '<form method="post" style="margin-top:6px;" onsubmit="return confirm(\'' . esc_js(__('Deze inschrijving verwijderen?', 'event-hub')) . '\');">';
+                wp_nonce_field('eh_event_dashboard_action_' . $event_id, 'eh_event_dashboard_nonce');
+                echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+                echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $reg_id) . '">';
+                echo '<input type="hidden" name="eh_dashboard_action" value="delete_registration">';
+                echo '<button class="button button-small" type="submit">' . esc_html__('Verwijderen', 'event-hub') . '</button>';
+                echo '</form>';
+                echo '</td>';
                 echo '</tr>';
             }
             echo '</tbody></table>';
         }
+        echo '</div>';
 
         echo '</div>';
     }
@@ -1020,6 +1261,41 @@ class Admin_Menus
             }
             wp_safe_redirect(add_query_arg('eh_notice', 'individual_error', $redirect));
             exit;
+        }
+
+        // Dashboard inline actions (update status / delete / promote)
+        if (
+            isset($_POST['eh_dashboard_action'], $_POST['registration_id'])
+            && !empty($_POST['eh_event_dashboard_nonce'])
+            && wp_verify_nonce(sanitize_text_field((string) $_POST['eh_event_dashboard_nonce']), 'eh_event_dashboard_action_' . $event_id)
+        ) {
+            $action = sanitize_text_field((string) $_POST['eh_dashboard_action']);
+            $reg_id = (int) $_POST['registration_id'];
+            $allowed_statuses = array_keys(Registrations::get_status_labels());
+
+            if ($action === 'update_status' && isset($_POST['new_status'])) {
+                $new_status = sanitize_text_field((string) $_POST['new_status']);
+                if (in_array($new_status, $allowed_statuses, true)) {
+                    $this->registrations->update_registration($reg_id, ['status' => $new_status]);
+                    wp_safe_redirect(add_query_arg('eh_notice', 'reg_updated', $redirect));
+                    exit;
+                }
+            }
+
+            if ($action === 'promote_waitlist' && isset($_POST['new_status'])) {
+                $new_status = sanitize_text_field((string) $_POST['new_status']);
+                if (in_array($new_status, ['registered', 'confirmed'], true)) {
+                    $this->registrations->update_registration($reg_id, ['status' => $new_status]);
+                    wp_safe_redirect(add_query_arg('eh_notice', 'reg_updated', $redirect));
+                    exit;
+                }
+            }
+
+            if ($action === 'delete_registration') {
+                $this->registrations->delete_registration($reg_id);
+                wp_safe_redirect(add_query_arg('eh_notice', 'reg_deleted', $redirect));
+                exit;
+            }
         }
     }
 

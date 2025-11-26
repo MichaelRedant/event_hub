@@ -484,6 +484,7 @@ class Widget_Session_List extends Widget_Base
             'type' => Controls_Manager::COLOR,
             'selectors' => [
                 '{{WRAPPER}} .eh-session-card .eh-badge-full' => 'background-color: {{VALUE}};',
+                '{{WRAPPER}} .eh-session-card .eh-waitlist' => 'color: {{VALUE}};',
             ],
         ]);
 
@@ -670,10 +671,11 @@ class Widget_Session_List extends Widget_Base
         $color = sanitize_hex_color((string) get_post_meta($post_id, '_eh_color', true)) ?: '#2271b1';
         $status = get_post_meta($post_id, '_eh_status', true) ?: 'open';
 
-        [$capacity, $booked, $available, $is_full] = $this->get_capacity_state($post_id);
+        [$capacity, $booked, $available, $is_full, $waitlist] = $this->get_capacity_state($post_id);
         $date_label = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : '';
 
         $badge = $this->get_status_badge($status, $is_full);
+        $colleagues = $this->get_colleagues_for_session($post_id);
 
         echo '<article class="eh-session-card" data-eventhub-session="' . esc_attr((string) $post_id) . '">';
         if (!empty($settings['show_availability']) && $settings['show_availability'] === 'yes' && $badge) {
@@ -692,9 +694,17 @@ class Widget_Session_List extends Widget_Base
         if (!empty($settings['show_ticket_note']) && $settings['show_ticket_note'] === 'yes' && $ticket_note) {
             echo '<div class="eh-meta">' . wp_kses_post(nl2br($ticket_note)) . '</div>';
         }
+        if ($colleagues) {
+            $names = array_map('esc_html', array_map('trim', $colleagues));
+            echo '<div class="eh-meta eh-colleagues-meta">' . esc_html__('Aanwezig:', 'event-hub') . ' ' . implode(', ', $names) . '</div>';
+        }
         if (!empty($settings['show_availability']) && $settings['show_availability'] === 'yes' && $capacity > 0) {
             $availability_label = sprintf(_n('%d plaats beschikbaar', '%d plaatsen beschikbaar', $available, 'event-hub'), $available);
             echo '<div class="eh-meta eh-availability" data-eventhub-availability>' . esc_html($availability_label) . '</div>';
+            if ($is_full && $waitlist > 0) {
+                $wait_label = sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $waitlist, 'event-hub'), $waitlist);
+                echo '<div class="eh-meta eh-waitlist" data-eventhub-waitlist>' . esc_html($wait_label) . '</div>';
+            }
         }
         if (!empty($settings['show_excerpt']) && $settings['show_excerpt'] === 'yes' && $excerpt) {
             echo '<p class="eh-excerpt">' . wp_kses_post($excerpt) . '</p>';
@@ -707,13 +717,13 @@ class Widget_Session_List extends Widget_Base
     }
 
     /**
-     * @return array{int,int,int,bool} [capacity, booked, available, is_full]
+     * @return array{int,int,int,bool,int} [capacity, booked, available, is_full, waitlist]
      */
     private function get_capacity_state(int $post_id): array
     {
         $capacity = (int) get_post_meta($post_id, '_eh_capacity', true);
         if ($capacity <= 0) {
-            return [0, 0, 0, false];
+            return [0, 0, 0, false, 0];
         }
 
         global $wpdb;
@@ -724,8 +734,41 @@ class Widget_Session_List extends Widget_Base
                 $post_id
             )
         );
+        $waitlist = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT COALESCE(SUM(people_count),0) FROM {$table} WHERE session_id = %d AND status = %s",
+                $post_id,
+                'waitlist'
+            )
+        );
         $available = max(0, $capacity - $booked);
-        return [$capacity, $booked, $available, $available <= 0];
+        return [$capacity, $booked, $available, $available <= 0, $waitlist];
+    }
+
+    /**
+     * Fetch selected colleagues (names) for a session.
+     *
+     * @return array<int,string>
+     */
+    private function get_colleagues_for_session(int $post_id): array
+    {
+        $ids = get_post_meta($post_id, '_eh_colleagues', true);
+        if (!is_array($ids)) {
+            return [];
+        }
+        $ids = array_map('intval', $ids);
+        if (!$ids) {
+            return [];
+        }
+        $global = \EventHub\Settings::get_general();
+        $all = isset($global['colleagues']) && is_array($global['colleagues']) ? $global['colleagues'] : [];
+        $names = [];
+        foreach ($ids as $cid) {
+            if (isset($all[$cid])) {
+                $names[] = trim(($all[$cid]['first_name'] ?? '') . ' ' . ($all[$cid]['last_name'] ?? ''));
+            }
+        }
+        return array_filter($names);
     }
 
     private function get_status_badge(string $status, bool $is_full): ?array
@@ -757,6 +800,7 @@ class Widget_Session_List extends Widget_Base
         .eh-session-card .eh-meta{color:#555;font-size:14px;margin-bottom:6px}
         .eh-session-card .eh-excerpt{margin:12px 0 16px}
         .eh-session-card .eh-btn{display:inline-flex;align-items:center;justify-content:center;padding:10px 16px;border-radius:4px;color:#fff;text-decoration:none;font-weight:600;transition:transform .2s ease,opacity .2s ease}
+        .eh-session-card .eh-waitlist{color:#a35b07;font-weight:700}
         .eh-session-card .eh-btn:hover{opacity:.9;transform:translateY(-1px)}
         .eh-session-card .eh-btn.is-disabled{opacity:.5;pointer-events:none}
         .eh-badge{position:absolute;top:14px;right:14px;padding:4px 10px;border-radius:4px;font-size:12px;color:#fff}

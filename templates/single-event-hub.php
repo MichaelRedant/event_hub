@@ -18,6 +18,7 @@ while (have_posts()) :
     $session_id = get_the_ID();
     $registrations = new Registrations();
     $state = $registrations->get_capacity_state($session_id);
+    $waitlist_count = $state['waitlist'] ?? 0;
     $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';
     $date_start = get_post_meta($session_id, '_eh_date_start', true);
     $date_end = get_post_meta($session_id, '_eh_date_end', true);
@@ -32,7 +33,20 @@ while (have_posts()) :
     $booking_open = get_post_meta($session_id, '_eh_booking_open', true);
     $booking_close = get_post_meta($session_id, '_eh_booking_close', true);
     $color = sanitize_hex_color((string) get_post_meta($session_id, '_eh_color', true)) ?: '#2271b1';
+    $enable_module_meta = get_post_meta($session_id, '_eh_enable_module', true);
+    $module_enabled = ($enable_module_meta === '') ? true : (bool) $enable_module_meta;
     $hero_image = get_the_post_thumbnail_url($session_id, 'full');
+    $availability_label = $state['capacity'] > 0
+        ? sprintf(__('%1$d / %2$d bezet', 'event-hub'), $state['booked'], $state['capacity'])
+        : __('Onbeperkt', 'event-hub');
+    $waitlist_label = $waitlist_count > 0
+        ? sprintf(_n('%d persoon', '%d personen', $waitlist_count, 'event-hub'), $waitlist_count)
+        : __('Geen wachtlijst', 'event-hub');
+    $location_label = $is_online ? __('Online', 'event-hub') : ($location ?: '');
+    $cta_label = $module_enabled
+        ? ($state['is_full'] ? __('Op wachtlijst', 'event-hub') : __('Inschrijven', 'event-hub'))
+        : __('Meer info', 'event-hub');
+    $cta_target = $module_enabled ? '#eh-register-form' : '#eh-details';
 
     $badge = (new class {
         public function render(string $status, bool $is_full): array
@@ -44,7 +58,7 @@ while (have_posts()) :
                 return ['label' => __('Gesloten', 'event-hub'), 'class' => 'status-closed'];
             }
             if ($status === 'full' || $is_full) {
-                return ['label' => __('Volzet', 'event-hub'), 'class' => 'status-full'];
+                return ['label' => __('Wachtlijst', 'event-hub'), 'class' => 'status-full'];
             }
             return ['label' => __('Beschikbaar', 'event-hub'), 'class' => 'status-open'];
         }
@@ -67,6 +81,7 @@ while (have_posts()) :
             'role' => sanitize_text_field($_POST['role'] ?? ''),
             'people_count' => isset($_POST['people_count']) ? (int) $_POST['people_count'] : 1,
             'consent_marketing' => isset($_POST['consent_marketing']) ? 1 : 0,
+            'waitlist_opt_in' => isset($_POST['waitlist_opt_in']) ? 1 : 0,
         ];
         $result = $registrations->create_registration($data);
         if (is_wp_error($result)) {
@@ -80,6 +95,7 @@ while (have_posts()) :
             }
             $state = $registrations->get_capacity_state($session_id);
             $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';
+            $waitlist_count = $state['waitlist'] ?? 0;
         }
     }
     ?>
@@ -89,31 +105,63 @@ while (have_posts()) :
                 <div class="eh-single__hero-media" style="background-image:url('<?php echo esc_url($hero_image); ?>');"></div>
             <?php endif; ?>
             <div class="eh-single__hero-content">
-                <?php if ($badge) : ?>
-                    <span class="eh-badge-pill <?php echo esc_attr($badge['class']); ?>"><?php echo esc_html($badge['label']); ?></span>
-                <?php endif; ?>
-                <h1><?php the_title(); ?></h1>
-                <?php if ($date_start) : ?>
-                    <p class="eh-single__hero-meta">
-                        <?php
-                        echo esc_html(date_i18n(get_option('date_format'), strtotime($date_start)));
-                        echo ' · ';
-                        echo esc_html(date_i18n(get_option('time_format'), strtotime($date_start)));
-                        if ($date_end) {
-                            echo ' - ' . esc_html(date_i18n(get_option('time_format'), strtotime($date_end)));
-                        }
-                        ?>
-                    </p>
-                <?php endif; ?>
-                <?php if ($is_online) : ?>
-                    <p class="eh-single__hero-meta"><?php esc_html_e('Online evenement', 'event-hub'); ?></p>
-                <?php elseif ($location) : ?>
-                    <p class="eh-single__hero-meta"><?php echo esc_html($location); ?></p>
-                <?php endif; ?>
+                <div class="eh-hero-top">
+                    <?php if ($badge) : ?>
+                        <span class="eh-badge-pill <?php echo esc_attr($badge['class']); ?>"><?php echo esc_html($badge['label']); ?></span>
+                    <?php endif; ?>
+                    <h1><?php the_title(); ?></h1>
+                    <?php if ($date_start) : ?>
+                        <p class="eh-single__hero-meta">
+                            <?php
+                            echo esc_html(date_i18n(get_option('date_format'), strtotime($date_start)));
+                            echo ' | ';
+                            echo esc_html(date_i18n(get_option('time_format'), strtotime($date_start)));
+                            if ($date_end) {
+                                echo ' - ' . esc_html(date_i18n(get_option('time_format'), strtotime($date_end)));
+                            }
+                            ?>
+                        </p>
+                    <?php endif; ?>
+                    <?php if ($location_label) : ?>
+                        <p class="eh-single__hero-meta"><?php echo esc_html($location_label); ?></p>
+                    <?php endif; ?>
+                    <div class="eh-cta-bar">
+                        <a class="eh-btn" href="<?php echo esc_url($cta_target); ?>" style="background: <?php echo esc_attr($color); ?>;">
+                            <?php echo esc_html($cta_label); ?>
+                        </a>
+                        <?php if (!$module_enabled) : ?>
+                            <span class="eh-single__hero-meta"><?php esc_html_e('Inschrijvingen verlopen extern.', 'event-hub'); ?></span>
+                        <?php elseif ($state['is_full']) : ?>
+                            <span class="eh-single__hero-meta"><?php esc_html_e('Volzet, wachtlijst mogelijk.', 'event-hub'); ?></span>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <div class="eh-stats-grid">
+                    <div class="eh-stat-chip">
+                        <h4><?php esc_html_e('Beschikbaarheid', 'event-hub'); ?></h4>
+                        <p><?php echo esc_html($availability_label); ?></p>
+                    </div>
+                    <div class="eh-stat-chip">
+                        <h4><?php esc_html_e('Wachtlijst', 'event-hub'); ?></h4>
+                        <p><?php echo esc_html($waitlist_label); ?></p>
+                    </div>
+                    <?php if ($location_label) : ?>
+                        <div class="eh-stat-chip">
+                            <h4><?php esc_html_e('Locatie', 'event-hub'); ?></h4>
+                            <p><?php echo esc_html($location_label); ?></p>
+                        </div>
+                    <?php endif; ?>
+                    <?php if ($price !== '') : ?>
+                        <div class="eh-stat-chip">
+                            <h4><?php esc_html_e('Prijs', 'event-hub'); ?></h4>
+                            <p><?php echo esc_html((string) $price); ?></p>
+                        </div>
+                    <?php endif; ?>
+                </div>
             </div>
         </section>
 
-        <section class="eh-single__details">
+        <section class="eh-single__details" id="eh-details">
             <div class="eh-single__card">
                 <h2><?php esc_html_e('Praktische info', 'event-hub'); ?></h2>
                 <dl class="eh-def-list">
@@ -163,6 +211,11 @@ while (have_posts()) :
                             } else {
                                 esc_html_e('Onbeperkt', 'event-hub');
                             }
+                            if ($waitlist_count > 0) {
+                                echo '<div class="eh-waitlist-note">';
+                                echo esc_html(sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $waitlist_count, 'event-hub'), $waitlist_count));
+                                echo '</div>';
+                            }
                             ?>
                         </dd>
                     </div>
@@ -182,6 +235,58 @@ while (have_posts()) :
                         </div>
                     <?php endif; ?>
                 </dl>
+                <?php
+                $colleagues_meta = get_post_meta($session_id, '_eh_colleagues', true);
+                $colleagues_ids = [];
+                $legacy_colleagues = [];
+                if (is_array($colleagues_meta)) {
+                    // Detect legacy structure (arrays with first_name keys).
+                    if ($colleagues_meta && isset($colleagues_meta[0]) && is_array($colleagues_meta[0]) && array_key_exists('first_name', $colleagues_meta[0])) {
+                        $legacy_colleagues = $colleagues_meta;
+                    } else {
+                        $colleagues_ids = array_map('intval', $colleagues_meta);
+                    }
+                }
+                $global = \EventHub\Settings::get_general();
+                $all_colleagues = isset($global['colleagues']) && is_array($global['colleagues']) ? $global['colleagues'] : [];
+                $colleagues = [];
+                if ($colleagues_ids) {
+                    foreach ($colleagues_ids as $cid) {
+                        if (isset($all_colleagues[$cid])) {
+                            $colleagues[] = $all_colleagues[$cid];
+                        }
+                    }
+                }
+                // Fallback: legacy colleagues
+                if (!$colleagues && $legacy_colleagues) {
+                    $colleagues = $legacy_colleagues;
+                }
+                if (!empty($colleagues)) :
+                    ?>
+                    <div class="eh-team-grid">
+                        <?php foreach ($colleagues as $colleague) : ?>
+                            <div class="eh-team-card">
+                                <?php
+                                $photo_id = (int) ($colleague['photo_id'] ?? 0);
+                                if ($photo_id) {
+                                    echo wp_get_attachment_image($photo_id, [160, 160]);
+                                } else {
+                                    $initials = '';
+                                    $fn = trim((string) ($colleague['first_name'] ?? ''));
+                                    $ln = trim((string) ($colleague['last_name'] ?? ''));
+                                    if ($fn !== '') { $initials .= mb_substr($fn, 0, 1); }
+                                    if ($ln !== '') { $initials .= mb_substr($ln, 0, 1); }
+                                    echo '<div class="eh-avatar-placeholder">' . esc_html($initials ?: '•') . '</div>';
+                                }
+                                ?>
+                                <div class="eh-team-name"><?php echo esc_html(trim(($colleague['first_name'] ?? '') . ' ' . ($colleague['last_name'] ?? ''))); ?></div>
+                                <?php if (!empty($colleague['role'])) : ?>
+                                    <div class="eh-team-role"><?php echo esc_html($colleague['role']); ?></div>
+                                <?php endif; ?>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
             </div>
 
             <div class="eh-single__content">
@@ -189,7 +294,8 @@ while (have_posts()) :
             </div>
         </section>
 
-        <section class="eh-single__form">
+        <?php if ($module_enabled) : ?>
+        <section class="eh-single__form" id="eh-register-form">
             <div class="eh-single__card">
                 <h2><?php esc_html_e('Inschrijven', 'event-hub'); ?></h2>
 
@@ -240,7 +346,13 @@ while (have_posts()) :
                     echo '<div class="eh-alert notice">' . esc_html($notice) . '</div>';
                 else :
                     if ($waitlist_mode) {
-                        echo '<div class="eh-alert notice">' . esc_html__('Dit event is volzet. Vul je gegevens in om op de wachtlijst te komen.', 'event-hub') . '</div>';
+                        $waitlist_text = $waitlist_count > 0
+                            ? sprintf(
+                                __('Dit event is volzet. Er staan momenteel %s op de wachtlijst. Vul je gegevens in om aan te sluiten.', 'event-hub'),
+                                sprintf(_n('%d persoon', '%d personen', $waitlist_count, 'event-hub'), $waitlist_count)
+                            )
+                            : __('Dit event is volzet. Vul je gegevens in om op de wachtlijst te komen.', 'event-hub');
+                        echo '<div class="eh-alert notice">' . esc_html($waitlist_text) . '</div>';
                     }
                     ?>
                     <form method="post" class="eh-form-grid">
@@ -308,6 +420,14 @@ while (have_posts()) :
                 <?php endif; ?>
             </div>
         </section>
+        <?php else : ?>
+        <section class="eh-single__form" id="eh-register-form">
+            <div class="eh-single__card">
+                <h2><?php esc_html_e('Inschrijvingen', 'event-hub'); ?></h2>
+                <div class="eh-alert notice"><?php esc_html_e('Inschrijvingen voor dit event verlopen extern.', 'event-hub'); ?></div>
+            </div>
+        </section>
+        <?php endif; ?>
     </main>
     <?php
 endwhile;

@@ -526,8 +526,10 @@ class Widget_Session_Detail extends Widget_Base
         if ($show_details) {
             $this->render_details($session_id);
         }
-        if ($show_form) {
+        if ($show_form && $module_enabled) {
             $this->render_registration_form($session_id, $settings);
+        } elseif ($show_form && !$module_enabled) {
+            echo '<div class="eh-alert notice">' . esc_html__('Inschrijvingen voor dit event verlopen extern.', 'event-hub') . '</div>';
         }
         echo '</div>';
         $this->inline_styles();
@@ -589,10 +591,24 @@ class Widget_Session_Detail extends Widget_Base
         $address = get_post_meta($session_id, '_eh_address', true);
         $organizer = get_post_meta($session_id, '_eh_organizer', true);
         $staff = get_post_meta($session_id, '_eh_staff', true);
+        $colleagues_meta = get_post_meta($session_id, '_eh_colleagues', true);
+        $colleagues_ids = is_array($colleagues_meta) ? array_map('intval', $colleagues_meta) : [];
+        $colleague_names = [];
+        if ($colleagues_ids) {
+            $global = Settings::get_general();
+            $all = isset($global['colleagues']) && is_array($global['colleagues']) ? $global['colleagues'] : [];
+            foreach ($colleagues_ids as $cid) {
+                if (isset($all[$cid])) {
+                    $colleague_names[] = trim(($all[$cid]['first_name'] ?? '') . ' ' . ($all[$cid]['last_name'] ?? ''));
+                }
+            }
+        }
         $price = get_post_meta($session_id, '_eh_price', true);
         $ticket_note = get_post_meta($session_id, '_eh_ticket_note', true);
         $no_show_fee = get_post_meta($session_id, '_eh_no_show_fee', true);
         $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';
+        $enable_module_meta = get_post_meta($session_id, '_eh_enable_module', true);
+        $module_enabled = ($enable_module_meta === '') ? true : (bool) $enable_module_meta;
 
         $state = $this->registrations->get_capacity_state($session_id);
         $capacity = $state['capacity'];
@@ -630,6 +646,12 @@ class Widget_Session_Detail extends Widget_Base
         }
         if ($staff) {
             $meta_output[] = esc_html(sprintf(__('Sprekers/medewerkers: %s', 'event-hub'), $staff));
+        }
+        if ($colleague_names) {
+            $meta_output[] = esc_html(sprintf(__('Aanwezig: %s', 'event-hub'), implode(', ', $colleague_names)));
+        }
+        if ($colleague_names) {
+            $meta_output[] = esc_html(sprintf(__('Aanwezig: %s', 'event-hub'), implode(', ', $colleague_names)));
         }
         $pricing_lines = [];
         if ($price !== '') {

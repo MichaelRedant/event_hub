@@ -10,3 +10,7 @@
 .eh-section-title{margin-top:40px}
 .eh-table th,.eh-table td{vertical-align:middle}
 .eh-table td a{color:#2271b1}
+.eh-panel{background:#fff;border:1px solid #e5e7f1;border-radius:14px;padding:16px;box-shadow:0 12px 30px rgba(15,23,42,.05);margin-top:18px}
+.eh-panel__head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.eh-panel__head h2{margin:0;font-size:18px;color:#0f172a}
+.eh-table-card{margin:0;border:none;box-shadow:none}

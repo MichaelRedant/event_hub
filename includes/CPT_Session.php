@@ -185,7 +185,12 @@ class CPT_Session
         if (!is_singular($this->get_cpt())) {
             return $template;
         }
-        if (defined('ELEMENTOR_PRO_VERSION')) {
+        $use_builtin = true;
+        if (is_singular() && get_the_ID()) {
+            $use_builtin_meta = get_post_meta(get_the_ID(), '_eh_use_builtin_page', true);
+            $use_builtin = ($use_builtin_meta === '') ? true : (bool) $use_builtin_meta;
+        }
+        if (!$use_builtin && defined('ELEMENTOR_PRO_VERSION')) {
             return $template;
         }
         if (locate_template('single-' . $this->get_cpt() . '.php')) {
@@ -243,6 +248,10 @@ class CPT_Session
 
     public function render_meta_box(\WP_Post $post): void
     {
+        // Needed for media modal (colleagues photos).
+        if (function_exists('wp_enqueue_media')) {
+            wp_enqueue_media();
+        }
         wp_nonce_field('octo_session_meta', 'octo_session_meta_nonce');
 
         $date_start = get_post_meta($post->ID, '_eh_date_start', true);
@@ -259,12 +268,19 @@ class CPT_Session
         $address = get_post_meta($post->ID, '_eh_address', true);
         $organizer = get_post_meta($post->ID, '_eh_organizer', true);
         $staff = get_post_meta($post->ID, '_eh_staff', true);
+        $general = Settings::get_general();
+        $colleagues_global = isset($general['colleagues']) && is_array($general['colleagues']) ? $general['colleagues'] : [];
+        $colleagues = (array) get_post_meta($post->ID, '_eh_colleagues', true);
+        $use_builtin_page_meta = get_post_meta($post->ID, '_eh_use_builtin_page', true);
+        $use_builtin_page = ($use_builtin_page_meta === '') ? 1 : (int) $use_builtin_page_meta;
         $price = get_post_meta($post->ID, '_eh_price', true);
         $no_show_fee = get_post_meta($post->ID, '_eh_no_show_fee', true);
         $show_on_site_meta = get_post_meta($post->ID, '_eh_show_on_site', true);
         $show_on_site = ($show_on_site_meta === '') ? true : (bool) $show_on_site_meta;
         $color = get_post_meta($post->ID, '_eh_color', true) ?: '#2271b1';
         $ticket_note = get_post_meta($post->ID, '_eh_ticket_note', true);
+        $enable_module_meta = get_post_meta($post->ID, '_eh_enable_module', true);
+        $enable_module = ($enable_module_meta === '') ? 1 : (int) $enable_module_meta;
 
         if (!$date_start && isset($_GET['eh_start'])) {
             $maybe = sanitize_text_field((string) $_GET['eh_start']);
@@ -292,6 +308,13 @@ class CPT_Session
         $sel_remind  = (array) get_post_meta($post->ID, '_eh_email_reminder_templates', true);
         $sel_follow  = (array) get_post_meta($post->ID, '_eh_email_followup_templates', true);
         $sel_waitlist = (array) get_post_meta($post->ID, '_eh_email_waitlist_templates', true);
+        $custom_email_fields = [
+            'confirmation' => __('Bevestiging inschrijving', 'event-hub'),
+            'reminder' => __('Herinnering (voor start)', 'event-hub'),
+            'followup' => __('Nadien (bedanking)', 'event-hub'),
+            'waitlist' => __('Wachtlijst bevestiging', 'event-hub'),
+            'waitlist_promotion' => __('Wachtlijst promotie', 'event-hub'),
+        ];
         ?>
         <div class="eh-admin eh-session-meta">
             <div class="eh-onboarding-card">
@@ -383,6 +406,20 @@ class CPT_Session
                                     <?php echo esc_html__('Toon in eventlijsten & widgets', 'event-hub'); ?>
                                 </label>
                                 <p class="description"><?php echo esc_html__('Schakel uit om intern te testen zonder publiek.', 'event-hub'); ?></p>
+                            </div>
+                            <div class="field full toggle">
+                                <label>
+                                    <input type="checkbox" name="_eh_use_builtin_page" value="1" <?php checked($use_builtin_page); ?>>
+                                    <?php echo esc_html__('Gebruik Event Hub pagina (inschrijving)', 'event-hub'); ?>
+                                </label>
+                                <p class="description"><?php echo esc_html__('Schakel uit als je voor dit event een externe/Elementor pagina wil gebruiken.', 'event-hub'); ?></p>
+                            </div>
+                            <div class="field full toggle">
+                                <label>
+                                    <input type="checkbox" name="_eh_enable_module" value="1" <?php checked($enable_module); ?>>
+                                    <?php echo esc_html__('Event Hub inschrijvingen activeren', 'event-hub'); ?>
+                                </label>
+                                <p class="description"><?php echo esc_html__('Schakel uit als dit event extern beheerd wordt en geen inschrijvingen via Event Hub nodig heeft.', 'event-hub'); ?></p>
                             </div>
                         </div>
                     </div>
@@ -504,11 +541,39 @@ class CPT_Session
                                 <label for="_eh_organizer"><?php echo esc_html__('Organisator', 'event-hub'); ?></label>
                                 <input type="text" id="_eh_organizer" name="_eh_organizer" value="<?php echo esc_attr($organizer); ?>" placeholder="<?php echo esc_attr__('vb. Team Marketing', 'event-hub'); ?>">
                             </div>
-                            <div class="field">
-                                <label for="_eh_staff"><?php echo esc_html__('Medewerkers (komma-gescheiden)', 'event-hub'); ?></label>
-                                <input type="text" id="_eh_staff" name="_eh_staff" value="<?php echo esc_attr($staff); ?>" placeholder="<?php echo esc_attr__('vb. Sarah, Tim, extern spreker…', 'event-hub'); ?>">
-                            </div>
                         </div>
+                    </div>
+                    <div class="eh-field-card">
+                        <div class="eh-field-card__head">
+                            <h3><?php echo esc_html__('Collega’s op dit event', 'event-hub'); ?></h3>
+                            <p><?php echo esc_html__('Selecteer teamleden uit de centrale lijst.', 'event-hub'); ?></p>
+                        </div>
+                        <?php if (!$colleagues_global) : ?>
+                            <p><?php echo esc_html__('Nog geen collega’s aangemaakt. Voeg ze toe via Event Hub > Algemene instellingen.', 'event-hub'); ?></p>
+                        <?php else : ?>
+                            <div class="eh-colleagues-list eh-colleagues-select">
+                                <?php foreach ($colleagues_global as $idx => $c) : 
+                                    $cid = (int) $idx;
+                                    $selected = in_array($cid, array_map('intval', $colleagues), true);
+                                    $name = trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? ''));
+                                    $role = $c['role'] ?? '';
+                                    $photo = (int) ($c['photo_id'] ?? 0);
+                                    ?>
+                                    <label class="eh-colleague-option">
+                                        <input type="checkbox" name="eh_colleagues_selected[]" value="<?php echo esc_attr((string) $cid); ?>" <?php checked($selected); ?>>
+                                        <?php if ($photo) : ?>
+                                            <span class="eh-colleague-photo-preview"><?php echo wp_get_attachment_image($photo, [40, 40]); ?></span>
+                                        <?php endif; ?>
+                                        <span>
+                                            <strong><?php echo esc_html($name ?: __('Naamloos', 'event-hub')); ?></strong>
+                                            <?php if ($role) : ?>
+                                                <div class="description" style="margin:0;"><?php echo esc_html($role); ?></div>
+                                            <?php endif; ?>
+                                        </span>
+                                    </label>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
@@ -527,49 +592,171 @@ class CPT_Session
                     echo '<p>' . esc_html__('Je hebt nog geen e-mailsjablonen. Maak er eerst eentje aan.', 'event-hub') . '</p>';
                     echo '<p><a class="button button-secondary" href="' . $link . '">' . esc_html__('Nieuw e-mailsjabloon', 'event-hub') . '</a></p>';
                 } else {
-                    echo '<div class="eh-form-two-col">';
-                    $render_select = function (string $name, array $selected, string $label, string $helper) use ($emails) {
-                        echo '<div class="field full">';
-                        echo '<label><strong>' . esc_html($label) . '</strong></label>';
-                        echo '<select name="' . esc_attr($name) . '[]" multiple class="eh-template-select">';
+                    $email_cards = [
+                        [
+                            'key' => 'waitlist',
+                            'label' => __('Wachtlijst bevestiging', 'event-hub'),
+                            'desc' => __('Bevestigt inschrijving op de wachtlijst.', 'event-hub'),
+                            'select_name' => '_eh_email_waitlist_templates',
+                            'selected' => $sel_waitlist,
+                            'timing' => null,
+                            'badge' => __('Wachtlijst', 'event-hub'),
+                        ],
+                        [
+                            'key' => 'waitlist_promotion',
+                            'label' => __('Wachtlijst promotie', 'event-hub'),
+                            'desc' => __('Verwittigt deelnemers wanneer ze van de wachtlijst komen.', 'event-hub'),
+                            'select_name' => '_eh_email_waitlist_templates',
+                            'selected' => $sel_waitlist,
+                            'timing' => null,
+                            'badge' => __('Wachtlijst', 'event-hub'),
+                        ],
+                        [
+                            'key' => 'confirmation',
+                            'label' => __('Bevestiging (na inschrijving)', 'event-hub'),
+                            'desc' => __('Wordt onmiddellijk verstuurd.', 'event-hub'),
+                            'select_name' => '_eh_email_confirm_templates',
+                            'selected' => $sel_confirm,
+                            'timing' => null,
+                            'badge' => __('Voor inschrijving', 'event-hub'),
+                        ],
+                        [
+                            'key' => 'reminder',
+                            'label' => __('Herinnering (voor de start)', 'event-hub'),
+                            'desc' => __('Plan je reminder voor dit event.', 'event-hub'),
+                            'select_name' => '_eh_email_reminder_templates',
+                            'selected' => $sel_remind,
+                            'timing' => [
+                                'name' => '_eh_reminder_offset_days',
+                                'label' => __('Dagen voor start', 'event-hub'),
+                                'value' => get_post_meta($post->ID, '_eh_reminder_offset_days', true),
+                                'placeholder' => '3',
+                            ],
+                            'badge' => __('Voor start', 'event-hub'),
+                        ],
+                        [
+                            'key' => 'followup',
+                            'label' => __('Nadien (aftermovie, survey, ...)', 'event-hub'),
+                            'desc' => __('Verstuur na afloop van dit event.', 'event-hub'),
+                            'select_name' => '_eh_email_followup_templates',
+                            'selected' => $sel_follow,
+                            'timing' => [
+                                'name' => '_eh_followup_offset_hours',
+                                'label' => __('Uren na einde', 'event-hub'),
+                                'value' => get_post_meta($post->ID, '_eh_followup_offset_hours', true),
+                                'placeholder' => '24',
+                            ],
+                            'badge' => __('Na afloop', 'event-hub'),
+                        ],
+                    ];
+
+                    echo '<div class="eh-email-grid">';
+                    foreach ($email_cards as $card) {
+                        $custom_subj = get_post_meta($post->ID, '_eh_email_custom_' . $card['key'] . '_subject', true);
+                        $custom_body = get_post_meta($post->ID, '_eh_email_custom_' . $card['key'] . '_body', true);
+                        echo '<div class="eh-email-card">';
+                        echo '<h4>' . esc_html($card['label']);
+                        if (!empty($card['badge'])) {
+                            echo '<span class="eh-badge-pill status-open" style="margin-left:auto;">' . esc_html($card['badge']) . '</span>';
+                        }
+                        echo '</h4>';
+                        echo '<p class="description" style="margin:4px 0 8px;">' . esc_html($card['desc']) . '</p>';
+                        echo '<div class="eh-email-body">';
+                        echo '<div class="eh-email-row">';
+                        echo '<label style="font-weight:600;">' . esc_html__('Sjabloon', 'event-hub') . '</label>';
+                        echo '<select name="' . esc_attr($card['select_name']) . '[]" multiple class="eh-template-select" style="min-height:90px;">';
                         foreach ($emails as $e) {
-                            $sel = in_array((string) $e->ID, array_map('strval', $selected), true) ? 'selected' : '';
+                            $sel = in_array((string) $e->ID, array_map('strval', $card['selected']), true) ? 'selected' : '';
                             echo '<option value="' . esc_attr((string) $e->ID) . '" ' . $sel . '>' . esc_html($e->post_title) . '</option>';
                         }
                         echo '</select>';
-                        echo '<p class="description">' . esc_html($helper) . '</p>';
-                        $render_select(
-                        '_eh_email_waitlist_templates',
-                        $sel_waitlist,
-                        __('Wachtlijst promotie', 'event-hub'),
-                        __('Verwittigt deelnemers wanneer ze van de wachtlijst komen.', 'event-hub')
-                    );
-                    echo '</div>';
-                    };
-
-                    $render_select(
-                        '_eh_email_confirm_templates',
-                        $sel_confirm,
-                        __('Bevestiging (na inschrijving)', 'event-hub'),
-                        __('Wordt onmiddellijk verstuurd.', 'event-hub')
-                    );
-                    $render_select(
-                        '_eh_email_reminder_templates',
-                        $sel_remind,
-                        __('Herinnering (voor de start)', 'event-hub'),
-                        __('Gepland volgens de timing in het sjabloon.', 'event-hub')
-                    );
-                    $render_select(
-                        '_eh_email_followup_templates',
-                        $sel_follow,
-                        __('Nadien (aftermovie, survey, …)', 'event-hub'),
-                        __('Versturen we nadat de sessie voorbij is.', 'event-hub')
-                    );
-                    echo '</div>';
+                        echo '</div>';
+                        if (!empty($card['timing'])) {
+                            echo '<div class="eh-email-row">';
+                            echo '<label style="font-weight:600;">' . esc_html($card['timing']['label']) . '</label>';
+                            echo '<input type="number" name="' . esc_attr($card['timing']['name']) . '" placeholder="' . esc_attr($card['timing']['placeholder']) . '" value="' . esc_attr((string) $card['timing']['value']) . '" min="0" />';
+                            echo '<span class="description">' . esc_html__('Laat leeg om de algemene instelling te gebruiken.', 'event-hub') . '</span>';
+                            echo '</div>';
+                        }
+                        echo '<details>';
+                        echo '<summary>' . esc_html__('Eigen mail voor dit event (optioneel)', 'event-hub') . '</summary>';
+                        echo '<div class="eh-email-row" style="flex-direction:column;align-items:flex-start;">';
+                        echo '<label style="font-weight:600;">' . esc_html__('Onderwerp', 'event-hub') . '</label>';
+                        echo '<input type="text" class="regular-text" name="_eh_email_custom_' . esc_attr($card['key']) . '_subject" value="' . esc_attr((string) $custom_subj) . '" placeholder="' . esc_attr__('Onderwerp', 'event-hub') . '" />';
+                        echo '<label style="font-weight:600;margin-top:8px;">' . esc_html__('Inhoud (HTML toegestaan)', 'event-hub') . '</label>';
+                        echo '<textarea class="large-text code" rows="4" name="_eh_email_custom_' . esc_attr($card['key']) . '_body" placeholder="' . esc_attr__('HTML of tekst', 'event-hub') . '">' . esc_textarea((string) $custom_body) . '</textarea>';
+                        echo '</div>';
+                        echo '</details>';
+                        echo '</div>'; // body
+                        echo '</div>'; // card
+                    }
+                    echo '</div>'; // grid
                 }
                 ?>
             </div>
         </div>
+        <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            try {
+                var wrapper = document.querySelector('.eh-colleagues-list');
+                var addBtn = document.querySelector('.eh-colleague-add');
+                var template = document.querySelector('#eh-colleague-template');
+                if (!wrapper || !addBtn || !template || typeof wp === 'undefined' || !wp.media) { return; }
+
+                function bindPhoto(btn) {
+                    btn.addEventListener('click', function (e) {
+                        e.preventDefault();
+                        var row = btn.closest('.eh-colleague-row');
+                        var input = row.querySelector('.eh-colleague-photo-id');
+                        var preview = row.querySelector('.eh-colleague-photo-preview');
+                        var frame = wp.media({
+                            title: '<?php echo esc_js(__('Selecteer foto', 'event-hub')); ?>',
+                            button: { text: '<?php echo esc_js(__('Gebruiken', 'event-hub')); ?>' },
+                            multiple: false
+                        });
+                        frame.on('select', function () {
+                            var attachment = frame.state().get('selection').first().toJSON();
+                            input.value = attachment.id;
+                            if (preview) {
+                                var url = (attachment.sizes && attachment.sizes.thumbnail ? attachment.sizes.thumbnail.url : attachment.url);
+                                preview.innerHTML = '<img src="' + url + '" alt="" style="width:60px;height:60px;border-radius:8px;object-fit:cover;">';
+                            }
+                        });
+                        frame.open();
+                    });
+                }
+
+                function bindRow(row) {
+                    var removeBtn = row.querySelector('.eh-colleague-remove');
+                    if (removeBtn) {
+                        removeBtn.addEventListener('click', function (e) {
+                            e.preventDefault();
+                            row.remove();
+                        });
+                    }
+                    var photoBtn = row.querySelector('.eh-colleague-photo-btn');
+                    if (photoBtn) {
+                        bindPhoto(photoBtn);
+                    }
+                }
+
+                wrapper.querySelectorAll('.eh-colleague-row').forEach(bindRow);
+
+                addBtn.addEventListener('click', function (e) {
+                    e.preventDefault();
+                    var idx = wrapper.querySelectorAll('.eh-colleague-row').length;
+                    var html = template.innerHTML.replace(/__index__/g, idx);
+                    var temp = document.createElement('div');
+                    temp.innerHTML = html.trim();
+                    var row = temp.firstElementChild;
+                    wrapper.appendChild(row);
+                    bindRow(row);
+                });
+            } catch (err) {
+                if (window.console) { console.warn('[EventHub] Colleagues init failed', err); }
+            }
+        });
+        </script>
         <?php
     }
 
@@ -858,10 +1045,21 @@ class CPT_Session
         if ($column === 'eh_occupancy') {
             $booked = $state['booked'];
             $capacity = $state['capacity'];
+            $waitlist = $state['waitlist'] ?? 0;
             $label = $capacity > 0 ? sprintf('%d / %d', $booked, $capacity) : (string) $booked;
             $percentage = $capacity > 0 ? min(100, max(0, round(($booked / max(1, $capacity)) * 100))) : 0;
             echo '<div class="eh-progress"><span class="eh-progress-bar" style="width:' . esc_attr((string) $percentage) . '%;"></span></div>';
             echo '<span class="eh-progress-label">' . esc_html($label) . '</span>';
+            if ($waitlist > 0) {
+                $waitlist_label = sprintf(
+                    _n('%d persoon', '%d personen', $waitlist, 'event-hub'),
+                    $waitlist
+                );
+                echo '<div class="eh-waitlist-row">';
+                echo '<span class="eh-badge-pill status-waitlist">' . esc_html__('Wachtlijst', 'event-hub') . '</span>';
+                echo '<span class="eh-progress-label">' . esc_html($waitlist_label) . '</span>';
+                echo '</div>';
+            }
             return;
         }
 
@@ -898,12 +1096,14 @@ class CPT_Session
         .eh-progress{background:#eef1f6;border-radius:999px;height:6px;margin-bottom:4px;overflow:hidden}
         .eh-progress-bar{display:block;height:100%;background:#2271b1;border-radius:999px}
         .eh-progress-label{font-size:12px;color:#4b5563;font-weight:600}
+        .eh-waitlist-row{display:flex;align-items:center;gap:6px;margin-top:6px}
         .eh-badge-pill{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
         .eh-badge-pill.status-open{background:#e3f4e8;color:#256029}
         .eh-badge-pill.status-full{background:#fdecea;color:#ab1f24}
         .eh-badge-pill.status-closed{background:#f0f0f0;color:#444}
         .eh-badge-pill.status-cancelled{background:#fce7f1;color:#8e2453}
         .eh-badge-pill.status-online{background:#e3f2fd;color:#0d47a1}
+        .eh-badge-pill.status-waitlist{background:#fff4e6;color:#b45309}
         </style>';
     }
 
@@ -954,6 +1154,18 @@ class CPT_Session
         $no_show_fee= isset($_POST['_eh_no_show_fee']) ? floatval((string) $_POST['_eh_no_show_fee']) : '';
         $ticket_note = isset($_POST['_eh_ticket_note']) ? wp_kses_post((string) $_POST['_eh_ticket_note']) : '';
         $color      = isset($_POST['_eh_color']) ? sanitize_hex_color((string) $_POST['_eh_color']) : '#2271b1';
+        $general = Settings::get_general();
+        $colleagues_global = isset($general['colleagues']) && is_array($general['colleagues']) ? $general['colleagues'] : [];
+        $colleagues_selected_raw = isset($_POST['eh_colleagues_selected']) ? (array) $_POST['eh_colleagues_selected'] : [];
+        $colleagues = array_values(array_map('intval', $colleagues_selected_raw));
+        $use_builtin_page_meta = isset($_POST['_eh_use_builtin_page']) ? (int) $_POST['_eh_use_builtin_page'] : 0;
+        // Fallback: map legacy structure to IDs if available and none selected.
+        if (!$colleagues) {
+            $legacy_existing = get_post_meta($post_id, '_eh_colleagues', true);
+            if (is_array($legacy_existing) && isset($legacy_existing[0]) && is_array($legacy_existing[0]) && array_key_exists('first_name', $legacy_existing[0])) {
+                $colleagues = $this->map_legacy_colleagues_to_ids($legacy_existing, $colleagues_global);
+            }
+        }
 
         // Convert HTML5 datetime-local (Y-m-d\TH:i) to MySQL datetime
         $ds_store = $date_start ? gmdate('Y-m-d H:i:00', strtotime($date_start)) : '';
@@ -968,6 +1180,7 @@ class CPT_Session
         update_post_meta($post_id, '_eh_show_on_site', $show_on_site);
         update_post_meta($post_id, '_eh_online_link', $online_link);
         update_post_meta($post_id, '_eh_capacity', $capacity);
+        update_post_meta($post_id, '_eh_enable_module', $enable_module_meta === '' ? 1 : (int) !empty($_POST['_eh_enable_module']));
         update_post_meta($post_id, '_eh_language', $language);
         update_post_meta($post_id, '_eh_target_audience', $audience);
         update_post_meta($post_id, '_eh_status', $status);
@@ -980,6 +1193,8 @@ class CPT_Session
         update_post_meta($post_id, '_eh_no_show_fee', $no_show_fee);
         update_post_meta($post_id, '_eh_ticket_note', $ticket_note);
         update_post_meta($post_id, '_eh_color', $color ?: '#2271b1');
+        update_post_meta($post_id, '_eh_use_builtin_page', $use_builtin_page_meta ? 1 : 0);
+        update_post_meta($post_id, '_eh_colleagues', $colleagues);
         // E-mail sjablonen per fase
         $confirm = isset($_POST['_eh_email_confirm_templates']) ? array_map('intval', (array) $_POST['_eh_email_confirm_templates']) : [];
         $remind  = isset($_POST['_eh_email_reminder_templates']) ? array_map('intval', (array) $_POST['_eh_email_reminder_templates']) : [];
@@ -989,6 +1204,20 @@ class CPT_Session
         update_post_meta($post_id, '_eh_email_reminder_templates', $remind);
         update_post_meta($post_id, '_eh_email_followup_templates', $follow);
         update_post_meta($post_id, '_eh_email_waitlist_templates', $waitlist);
+        $reminder_offset = isset($_POST['_eh_reminder_offset_days']) && $_POST['_eh_reminder_offset_days'] !== '' ? max(0, (int) $_POST['_eh_reminder_offset_days']) : '';
+        $followup_offset = isset($_POST['_eh_followup_offset_hours']) && $_POST['_eh_followup_offset_hours'] !== '' ? max(0, (int) $_POST['_eh_followup_offset_hours']) : '';
+        update_post_meta($post_id, '_eh_reminder_offset_days', $reminder_offset);
+        update_post_meta($post_id, '_eh_followup_offset_hours', $followup_offset);
+        $custom_email_fields = ['confirmation','reminder','followup','waitlist','waitlist_promotion'];
+        foreach ($custom_email_fields as $key) {
+            $subj = isset($_POST['_eh_email_custom_' . $key . '_subject']) ? wp_kses_post((string) $_POST['_eh_email_custom_' . $key . '_subject']) : '';
+            $body = isset($_POST['_eh_email_custom_' . $key . '_body']) ? wp_kses_post((string) $_POST['_eh_email_custom_' . $key . '_body']) : '';
+            update_post_meta($post_id, '_eh_email_custom_' . $key . '_subject', $subj);
+            update_post_meta($post_id, '_eh_email_custom_' . $key . '_body', $body);
+        }
+
+        // Recalculate capacity status and promote waitlist if needed after admin changes.
+        $this->registrations->sync_session_status($post_id);
 
         $this->debug_log('save_meta_boxes_done', [
             'post_id'    => $post_id,
@@ -1036,4 +1265,32 @@ class CPT_Session
         file_put_contents($path, $line, FILE_APPEND);
     }
 
+    /**
+     * Map legacy colleague entries (with names) to global colleague IDs.
+     *
+     * @param array $legacy Array of arrays with first_name/last_name keys.
+     * @param array $global List of global colleagues.
+     * @return array<int>
+     */
+    private function map_legacy_colleagues_to_ids(array $legacy, array $global): array
+    {
+        if (!$legacy || !$global) {
+            return [];
+        }
+        $name_to_id = [];
+        foreach ($global as $id => $c) {
+            $name = strtolower(trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? '')));
+            if ($name !== '') {
+                $name_to_id[$name] = (int) $id;
+            }
+        }
+        $ids = [];
+        foreach ($legacy as $row) {
+            $name = strtolower(trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? '')));
+            if ($name && isset($name_to_id[$name])) {
+                $ids[] = $name_to_id[$name];
+            }
+        }
+        return array_values(array_unique($ids));
+    }
 }
