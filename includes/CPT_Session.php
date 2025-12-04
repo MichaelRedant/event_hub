@@ -28,9 +28,13 @@ class CPT_Session
 
     public function register_post_type(): void
     {
-        // If using external CPT, do not register our own
+        // If using external CPT, ensure it exists; otherwise fallback to built-in to avoid invalid post type errors.
         if (\EventHub\Settings::use_external_cpt()) {
-            return;
+            $slug = $this->get_cpt();
+            if (post_type_exists($slug)) {
+                return;
+            }
+            \EventHub\Settings::fallback_to_builtin_cpt();
         }
 
         $labels = [
@@ -88,7 +92,111 @@ class CPT_Session
             'normal',
             'default'
         );
+        add_meta_box(
+            'eh_extra_fields',
+            __('Extra formulier-velden', 'event-hub'),
+            [$this, 'render_extra_fields_meta_box'],
+            $this->get_cpt(),
+            'normal',
+            'default'
+        );
 
+    }
+
+    public function render_extra_fields_meta_box(\WP_Post $post): void
+    {
+        $saved = get_post_meta($post->ID, '_eh_extra_fields', true);
+        $fields = is_array($saved) ? $saved : [];
+        $hide_defaults = (array) get_post_meta($post->ID, '_eh_form_hide_fields', true);
+        wp_nonce_field('eh_extra_fields_meta', 'eh_extra_fields_nonce');
+        echo '<style>
+            .eh-extra-box{border:1px solid #e5e7eb;border-radius:10px;background:#fff;padding:12px;margin-top:8px}
+            #eh-extra-fields-table th,#eh-extra-fields-table td{vertical-align:top}
+            #eh-extra-fields-table textarea{min-width:220px}
+            .eh-extra-box h4{margin:14px 0 6px;font-size:14px}
+        </style>';
+        echo '<p>' . esc_html__('Voeg optionele velden toe die enkel voor dit event getoond worden.', 'event-hub') . '</p>';
+        echo '<div class="eh-extra-box">';
+        echo '<table class="widefat striped" id="eh-extra-fields-table">';
+        echo '<thead><tr>';
+        echo '<th>' . esc_html__('Label', 'event-hub') . '</th>';
+        echo '<th>' . esc_html__('Slug', 'event-hub') . '</th>';
+        echo '<th>' . esc_html__('Type', 'event-hub') . '</th>';
+        echo '<th>' . esc_html__('Opties (per lijn bij select)', 'event-hub') . '</th>';
+        echo '<th>' . esc_html__('Verplicht', 'event-hub') . '</th>';
+        echo '<th></th>';
+        echo '</tr></thead><tbody>';
+        if (!$fields) {
+            $fields[] = ['label' => '', 'slug' => '', 'type' => 'text', 'required' => 0, 'options' => []];
+        }
+        foreach ($fields as $index => $field) {
+            $this->render_extra_field_row($index, $field);
+        }
+        echo '</tbody></table>';
+        echo '<p><button type="button" class="button" id="eh-extra-add-row">' . esc_html__('Veld toevoegen', 'event-hub') . '</button></p>';
+        ?>
+        <script>
+        (function(){
+            const table = document.getElementById('eh-extra-fields-table');
+            const addBtn = document.getElementById('eh-extra-add-row');
+            if (!table || !addBtn) { return; }
+            addBtn.addEventListener('click', function(){
+                const tbody = table.querySelector('tbody');
+                const index = tbody.querySelectorAll('tr').length;
+                const tpl = document.getElementById('eh-extra-row-template').innerHTML.replace(/__i__/g, index);
+                const wrap = document.createElement('tbody');
+                wrap.innerHTML = tpl;
+                tbody.appendChild(wrap.firstElementChild);
+            });
+            table.addEventListener('click', function(e){
+                if (e.target.classList.contains('eh-extra-remove')) {
+                    e.preventDefault();
+                    const row = e.target.closest('tr');
+                    if (row) { row.remove(); }
+                }
+            });
+        })();
+        </script>
+        <template id="eh-extra-row-template">
+            <?php $this->render_extra_field_row('__i__', ['label'=>'','slug'=>'','type'=>'text','required'=>0,'options'=>[]], true); ?>
+        </template>
+        <h4>' . esc_html__('Standaard velden verbergen', 'event-hub') . '</h4>
+        <p><label><input type="checkbox" name="eh_hide_fields[]" value="people_count"' . checked(in_array('people_count', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Aantal personen"', 'event-hub') . '</label></p>
+        <p><label><input type="checkbox" name="eh_hide_fields[]" value="phone"' . checked(in_array('phone', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Telefoon"', 'event-hub') . '</label></p>
+        <p><label><input type="checkbox" name="eh_hide_fields[]" value="company"' . checked(in_array('company', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Bedrijf"', 'event-hub') . '</label></p>
+        <p><label><input type="checkbox" name="eh_hide_fields[]" value="vat"' . checked(in_array('vat', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "BTW-nummer"', 'event-hub') . '</label></p>
+        <p><label><input type="checkbox" name="eh_hide_fields[]" value="role"' . checked(in_array('role', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Rol"', 'event-hub') . '</label></p>
+        <p><label><input type="checkbox" name="eh_hide_fields[]" value="marketing"' . checked(in_array('marketing', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg marketing-opt-in', 'event-hub') . '</label></p>
+        </div>
+        <?php
+    }
+
+    private function render_extra_field_row($index, array $field, bool $rawOutput = false): void
+    {
+        $label = $field['label'] ?? '';
+        $slug = $field['slug'] ?? '';
+        $type = $field['type'] ?? 'text';
+        $required = !empty($field['required']);
+        $options = '';
+        if (!empty($field['options']) && is_array($field['options'])) {
+            $options = implode("\n", $field['options']);
+        }
+        ob_start();
+        echo '<tr>';
+        echo '<td><input type="text" name="eh_extra_fields[label][]" value="' . esc_attr((string) $label) . '" class="regular-text" /></td>';
+        echo '<td><input type="text" name="eh_extra_fields[slug][]" value="' . esc_attr((string) $slug) . '" class="regular-text" placeholder="broodje" /></td>';
+        echo '<td><select name="eh_extra_fields[type][]">';
+        $types = ['text' => __('Tekst', 'event-hub'), 'textarea' => __('Tekstvak', 'event-hub'), 'select' => __('Keuzelijst', 'event-hub')];
+        foreach ($types as $val => $label_t) {
+            echo '<option value="' . esc_attr($val) . '"' . selected($type, $val, false) . '>' . esc_html($label_t) . '</option>';
+        }
+        echo '</select></td>';
+        echo '<td><textarea name="eh_extra_fields[options][]" rows="2" class="large-text code" placeholder="' . esc_attr__("broodje kaas\nbroodje hesp", 'event-hub') . '">' . esc_textarea($options) . '</textarea></td>';
+        echo '<td style="text-align:center"><input type="checkbox" name="eh_extra_fields[required][' . esc_attr((string) $index) . ']" value="1"' . checked($required, true, false) . ' /></td>';
+        echo '<td><button type="button" class="button-link-delete eh-extra-remove">' . esc_html__('Verwijder', 'event-hub') . '</button></td>';
+        echo '</tr>';
+        $html = ob_get_clean();
+        echo $rawOutput ? $html : $html; // if rawOutput true, used inside template
     }
 
     public function register_admin_columns(): void
@@ -97,6 +205,121 @@ class CPT_Session
         add_filter("manage_edit-{$cpt}_columns", [$this, 'add_admin_columns']);
         add_action("manage_{$cpt}_posts_custom_column", [$this, 'render_admin_column'], 10, 2);
         add_action('admin_head', [$this, 'admin_columns_styles']);
+    }
+
+    public function register_shortcodes(): void
+    {
+        add_shortcode('event_hub_session', [$this, 'render_session_shortcode']);
+        add_shortcode('event_hub_list', [$this, 'render_list_shortcode']);
+    }
+
+    public function render_session_shortcode($atts = []): string
+    {
+        $atts = shortcode_atts([
+            'id' => 0,
+            'template' => '',
+        ], $atts, 'event_hub_session');
+
+        $post_id = (int) $atts['id'];
+        if (!$post_id && isset($GLOBALS['post']) && $GLOBALS['post'] instanceof \WP_Post) {
+            $post_id = (int) $GLOBALS['post']->ID;
+        }
+        if (!$post_id) {
+            return esc_html__('Geen event opgegeven voor de shortcode.', 'event-hub');
+        }
+
+        $post = get_post($post_id);
+        if (!$post || $post->post_type !== $this->get_cpt()) {
+            return esc_html__('Event niet gevonden of ongeldig post type.', 'event-hub');
+        }
+
+        $template_attr = sanitize_file_name((string) $atts['template']);
+        $fallback = EVENT_HUB_PATH . 'templates/single-event-hub.php';
+        $template = $fallback;
+        if ($template_attr) {
+            $located = locate_template($template_attr);
+            if ($located) {
+                $template = $located;
+            }
+        } else {
+            $located = locate_template('single-' . $this->get_cpt() . '.php');
+            if ($located) {
+                $template = $located;
+            }
+        }
+        $template = apply_filters('event_hub_session_shortcode_template', $template, $post, $atts);
+        if (!file_exists($template)) {
+            return esc_html__('Geen template gevonden voor dit event.', 'event-hub');
+        }
+
+        setup_postdata($post);
+        ob_start();
+        include $template;
+        wp_reset_postdata();
+        return (string) ob_get_clean();
+    }
+
+    public function render_list_shortcode($atts = []): string
+    {
+        $atts = shortcode_atts([
+            'count' => 6,
+            'order' => 'ASC',
+            'status' => '',
+            'show_excerpt' => '1',
+            'show_date' => '1',
+        ], $atts, 'event_hub_list');
+
+        $count = max(1, (int) $atts['count']);
+        $order = strtoupper((string) $atts['order']) === 'DESC' ? 'DESC' : 'ASC';
+        $show_excerpt = $atts['show_excerpt'] === '1' || $atts['show_excerpt'] === 1 || $atts['show_excerpt'] === true;
+        $show_date = $atts['show_date'] === '1' || $atts['show_date'] === 1 || $atts['show_date'] === true;
+        $status = sanitize_text_field((string) $atts['status']);
+
+        $meta_query = [];
+        if ($status !== '') {
+            $meta_query[] = [
+                'key' => '_eh_status',
+                'value' => $status,
+                'compare' => '=',
+            ];
+        }
+
+        $query = new \WP_Query([
+            'post_type' => $this->get_cpt(),
+            'posts_per_page' => $count,
+            'orderby' => 'meta_value',
+            'meta_key' => '_eh_date_start',
+            'order' => $order,
+            'post_status' => 'publish',
+            'meta_query' => $meta_query,
+        ]);
+
+        if (!$query->have_posts()) {
+            return '<div class="eh-session-list-block no-results">' . esc_html__('Geen events gevonden.', 'event-hub') . '</div>';
+        }
+
+        ob_start();
+        echo '<div class="eh-session-list-block">';
+        while ($query->have_posts()) {
+            $query->the_post();
+            $session_id = get_the_ID();
+            $start = get_post_meta($session_id, '_eh_date_start', true);
+            $time = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : '';
+            $excerpt = $show_excerpt ? get_the_excerpt() : '';
+            echo '<article class="eh-session-card">';
+            echo '<h3 class="eh-session-title"><a href="' . esc_url(get_permalink()) . '">' . esc_html(get_the_title()) . '</a></h3>';
+            if ($show_date && $time) {
+                echo '<div class="eh-session-meta"><span class="eh-session-date">' . esc_html($time) . '</span></div>';
+            }
+            if ($excerpt) {
+                echo '<div class="eh-session-excerpt">' . esc_html($excerpt) . '</div>';
+            }
+            echo '<a class="eh-session-link" href="' . esc_url(get_permalink()) . '">' . esc_html__('Bekijk event', 'event-hub') . '</a>';
+            echo '</article>';
+        }
+        echo '</div>';
+        wp_reset_postdata();
+        return (string) ob_get_clean();
     }
 
     public function add_dashboard_row_action(array $actions, \WP_Post $post): array
@@ -185,6 +408,8 @@ class CPT_Session
         if (!is_singular($this->get_cpt())) {
             return $template;
         }
+        $general = Settings::get_general();
+        $custom_enabled = !empty($general['single_custom_enabled']);
         $use_builtin = true;
         if (is_singular() && get_the_ID()) {
             $use_builtin_meta = get_post_meta(get_the_ID(), '_eh_use_builtin_page', true);
@@ -273,6 +498,9 @@ class CPT_Session
         $colleagues = (array) get_post_meta($post->ID, '_eh_colleagues', true);
         $use_builtin_page_meta = get_post_meta($post->ID, '_eh_use_builtin_page', true);
         $use_builtin_page = ($use_builtin_page_meta === '') ? 1 : (int) $use_builtin_page_meta;
+        $use_local_builder = (int) get_post_meta($post->ID, '_eh_use_local_builder', true);
+        $builder_local = get_post_meta($post->ID, '_eh_builder_sections', true);
+        $builder_local = $builder_local !== '' ? $builder_local : ($general['single_builder_sections'] ?? '[]');
         $price = get_post_meta($post->ID, '_eh_price', true);
         $no_show_fee = get_post_meta($post->ID, '_eh_no_show_fee', true);
         $show_on_site_meta = get_post_meta($post->ID, '_eh_show_on_site', true);
@@ -423,10 +651,157 @@ class CPT_Session
                             </div>
                         </div>
                     </div>
+                    <div class="eh-field-card">
+                        <div class="eh-field-card__head">
+                            <h3><?php echo esc_html__('Layout builder (event)', 'event-hub'); ?></h3>
+                            <p><?php echo esc_html__('Overschrijf de globale layout voor dit event.', 'event-hub'); ?></p>
+                        </div>
+                        <div class="eh-form-two-col">
+                            <div class="field full toggle">
+                                <label>
+                                    <input type="checkbox" name="_eh_use_local_builder" value="1" <?php checked($use_local_builder); ?>>
+                                    <?php echo esc_html__('Gebruik lokale builder', 'event-hub'); ?>
+                                </label>
+                                <p class="description"><?php echo esc_html__('Aan = deze builder JSON gebruiken in plaats van de globale.', 'event-hub'); ?></p>
+                            </div>
+                            <div class="field" style="grid-column:1 / -1;" id="eh-builder-local-wrapper">
+                                <label><?php echo esc_html__('Secties & stijl (lokaal)', 'event-hub'); ?></label>
+                                <input type="hidden" id="eh-builder-local" name="_eh_builder_sections" value="<?php echo esc_attr((string) $builder_local); ?>">
+                                <div id="eh-builder-local-list" style="border:1px solid #e5e7eb;border-radius:10px;padding:8px;background:#fff;box-shadow:0 6px 16px rgba(15,23,42,.05);"></div>
+                                <div style="display:flex;gap:8px;align-items:center;margin-top:8px;">
+                                    <select id="eh-builder-local-add" style="min-width:160px;">
+                                        <option value="status"><?php echo esc_html__('Status', 'event-hub'); ?></option>
+                                        <option value="hero"><?php echo esc_html__('Hero', 'event-hub'); ?></option>
+                                        <option value="info"><?php echo esc_html__('Praktische info', 'event-hub'); ?></option>
+                                        <option value="content"><?php echo esc_html__('Content', 'event-hub'); ?></option>
+                                        <option value="form"><?php echo esc_html__('Formulier', 'event-hub'); ?></option>
+                                        <option value="quote"><?php echo esc_html__('Quote', 'event-hub'); ?></option>
+                                        <option value="faq"><?php echo esc_html__('FAQ', 'event-hub'); ?></option>
+                                        <option value="agenda"><?php echo esc_html__('Agenda', 'event-hub'); ?></option>
+                                        <option value="buttons"><?php echo esc_html__('CTA knoppen', 'event-hub'); ?></option>
+                                        <option value="gallery"><?php echo esc_html__('Gallery', 'event-hub'); ?></option>
+                                    </select>
+                                    <button type="button" class="button" id="eh-builder-local-add-btn"><?php echo esc_html__('Sectie toevoegen', 'event-hub'); ?></button>
+                                </div>
+                                <p class="description"><?php echo esc_html__('Sleep voor volgorde, pas accent/bg/heading/font/padding per sectie aan. Wordt alleen gebruikt als lokale builder is ingeschakeld.', 'event-hub'); ?></p>
+                            </div>
+                    </div>
                 </div>
             </div>
 
-            <div class="eh-section">
+            <script>
+                (function(){
+                    const wrap=document.getElementById('eh-builder-local-wrapper');
+                    const onToggle=document.querySelector('input[name="_eh_use_local_builder"]');
+                    const listEl=document.getElementById('eh-builder-local-list');
+                    const inputEl=document.getElementById('eh-builder-local');
+                    const addSel=document.getElementById('eh-builder-local-add');
+                    const addBtn=document.getElementById('eh-builder-local-add-btn');
+                    if(!wrap||!listEl||!inputEl) return;
+                    const defaults={
+                        status:'<?php echo esc_js(__('Status', 'event-hub')); ?>',
+                        hero:'<?php echo esc_js(__('Hero', 'event-hub')); ?>',
+                        info:'<?php echo esc_js(__('Praktische info', 'event-hub')); ?>',
+                        content:'<?php echo esc_js(__('Content', 'event-hub')); ?>',
+                        form:'<?php echo esc_js(__('Formulier', 'event-hub')); ?>',
+                        quote:'<?php echo esc_js(__('Quote', 'event-hub')); ?>',
+                        faq:'<?php echo esc_js(__('FAQ', 'event-hub')); ?>',
+                        agenda:'<?php echo esc_js(__('Agenda', 'event-hub')); ?>',
+                        buttons:'<?php echo esc_js(__('CTA knoppen', 'event-hub')); ?>',
+                        gallery:'<?php echo esc_js(__('Gallery', 'event-hub')); ?>'
+                    };
+                    function rowTpl(sec){
+                        const accent=sec.accent||'#0f172a';
+                        const bg=sec.bg||'#ffffff';
+                        const heading=sec.heading||'';
+                        const fontSize=sec.fontSize||16;
+                        const padding=sec.padding||16;
+                        const paddingMobile=sec.paddingMobile||14;
+                        const gradient=sec.gradient||'';
+                        const bgImage=sec.bgImage||'';
+                        const variant=sec.variant||'default';
+                        return `<div class="eh-builder-row" draggable="true" data-id="${sec.id}" style="display:grid;grid-template-columns:16px 1fr;gap:10px;align-items:center;padding:8px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:6px;background:#f8fafc;"><span style="cursor:grab;font-size:16px;line-height:1;">&#8942;&#8942;</span><div><div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><strong>${sec.title||defaults[sec.id]||sec.id}</strong><span style="font-size:11px;color:#475569;">${sec.id}</span></div><div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap;"><label style="font-size:12px;color:#475569;"><?php echo esc_js(__('Accent', 'event-hub')); ?> <input data-field="accent" type="color" value="${accent}" style="width:70px;"></label><label style="font-size:12px;color:#475569;"><?php echo esc_js(__('Achtergrond', 'event-hub')); ?> <input data-field="bg" type="color" value="${bg}" style="width:70px;"></label><label style="font-size:12px;color:#475569;"><?php echo esc_js(__('Gradient', 'event-hub')); ?> <select data-field="gradient" style="min-width:120px;"><option value=""><?php echo esc_js(__('Geen', 'event-hub')); ?></option><option value="sunset" ${gradient==='sunset'?'selected':''}>Sunset</option><option value="mint" ${gradient==='mint'?'selected':''}>Mint</option><option value="ocean" ${gradient==='ocean'?'selected':''}>Ocean</option></select></label><label style="font-size:12px;color:#475569;display:flex;gap:4px;align-items:center;"><?php echo esc_js(__('Bg image', 'event-hub')); ?> <input data-field="bgImage" type="text" value="${bgImage}" style="width:150px;" placeholder="https://..."><button type="button" class="button button-small eh-builder-media" data-target="bgImage"><?php echo esc_js(__('Kies', 'event-hub')); ?></button></label><label style="font-size:12px;color:#475569;"><?php echo esc_js(__('Heading', 'event-hub')); ?> <input data-field="heading" type="text" value="${heading}" style="width:140px;" placeholder="<?php echo esc_js(__('Titel override', 'event-hub')); ?>"></label><label style="font-size:12px;color:#475569;"><?php echo esc_js(__('CTA label', 'event-hub')); ?> <input data-field="cta" type="text" value="${sec.cta||''}" style="width:120px;" placeholder="<?php echo esc_js(__('Bijv. Inschrijven', 'event-hub')); ?>"></label><label style="font-size:12px;color:#475569;"><?php echo esc_js(__('Font size', 'event-hub')); ?> <input data-field="fontSize" type="number" min="12" max="32" value="${fontSize}" style="width:70px;"></label><label style="font-size:12px;color:#475569;"><?php echo esc_js(__('Padding (desktop)', 'event-hub')); ?> <input data-field="padding" type="number" min="8" max="64" value="${padding}" style="width:70px;"></label><label style="font-size:12px;color:#475569;"><?php echo esc_js(__('Padding mobiel', 'event-hub')); ?> <input data-field="paddingMobile" type="number" min="6" max="48" value="${paddingMobile}" style="width:70px;"></label><label style="font-size:12px;color:#475569;"><?php echo esc_js(__('Variant', 'event-hub')); ?> <select data-field="variant" style="min-width:120px;"><option value="default" ${variant==='default'?'selected':''}>Default</option><option value="card" ${variant==='card'?'selected':''}>Card</option><option value="soft" ${variant==='soft'?'selected':''}>Soft</option></select></label></div></div></div>`;
+                    }
+                    let dragEl=null;
+                    function read(){
+                        try { return JSON.parse(inputEl.value)||[]; } catch(e){ return []; }
+                    }
+                    function render(){
+                        listEl.innerHTML='';
+                        read().forEach(sec=>{
+                            const w=document.createElement('div');
+                            w.innerHTML=rowTpl(sec);
+                            const row=w.firstChild;
+                            if(row){ row.dataset.body = sec.body || ''; listEl.appendChild(row); }
+                        });
+                        attach();
+                    }
+                    function attach(){
+                        listEl.querySelectorAll('.eh-builder-row').forEach(row=>{
+                            row.addEventListener('dragstart',e=>{dragEl=row; e.dataTransfer.effectAllowed='move';});
+                            row.addEventListener('dragover',e=>{
+                                e.preventDefault();
+                                const over=e.target.closest('.eh-builder-row');
+                                if(!over||over===row||over===dragEl) return;
+                                const rect=over.getBoundingClientRect();
+                                const before=(e.clientY-rect.top)/rect.height < 0.5;
+                                listEl.insertBefore(dragEl, before?over:over.nextSibling);
+                                sync();
+                            });
+                        });
+                        listEl.querySelectorAll('input,select').forEach(inp=>{inp.addEventListener('input', sync);});
+                        listEl.querySelectorAll('.eh-builder-media').forEach(btn=>{
+                            btn.addEventListener('click',function(e){
+                                e.preventDefault();
+                                if(typeof wp === 'undefined' || !wp.media) return;
+                                const input = btn.previousElementSibling;
+                                const frame = wp.media({title:'<?php echo esc_js(__('Selecteer achtergrond', 'event-hub')); ?>',button:{text:'<?php echo esc_js(__('Gebruiken', 'event-hub')); ?>'},multiple:false});
+                                frame.on('select', function(){
+                                    const att = frame.state().get('selection').first().toJSON();
+                                    if(input){ input.value = att.url || ''; sync(); }
+                                });
+                                frame.open();
+                            });
+                        });
+                    }
+                    function sync(){
+                        const rows=[...listEl.querySelectorAll('.eh-builder-row')];
+                        const data=rows.map(r=>({
+                            id:r.dataset.id||'',
+                            title:r.querySelector('strong')?.textContent||r.dataset.id,
+                            accent:r.querySelector('[data-field="accent"]')?.value||'',
+                            bg:r.querySelector('[data-field="bg"]')?.value||'',
+                            gradient:r.querySelector('[data-field="gradient"]')?.value||'',
+                            bgImage:r.querySelector('[data-field="bgImage"]')?.value||'',
+                            heading:r.querySelector('[data-field="heading"]')?.value||'',
+                            cta:r.querySelector('[data-field="cta"]')?.value||'',
+                            fontSize:parseInt(r.querySelector('[data-field="fontSize"]')?.value||'16',10),
+                            padding:parseInt(r.querySelector('[data-field="padding"]')?.value||'16',10),
+                            paddingMobile:parseInt(r.querySelector('[data-field="paddingMobile"]')?.value||'14',10),
+                            variant:r.querySelector('[data-field="variant"]')?.value||'default',
+                            body:r.dataset.body||''
+                        }));
+                        inputEl.value = JSON.stringify(data);
+                    }
+                    function addSection(type){
+                        const data=read();
+                        data.push({id:type,title:defaults[type]||type,accent:'#0f172a',bg:'#ffffff',gradient:'',bgImage:'',heading:'',cta:'',fontSize:16,padding:16,paddingMobile:14,variant:'default',body:''});
+                        inputEl.value=JSON.stringify(data);
+                        render();
+                        sync();
+                    }
+                    if(addBtn){ addBtn.addEventListener('click', ()=>addSection(addSel.value)); }
+                    function toggle(){
+                        wrap.style.display = onToggle && onToggle.checked ? '' : 'none';
+                    }
+                    if(onToggle){ onToggle.addEventListener('change', toggle); }
+                    toggle();
+                    render();
+                })();
+            </script>
+        </div>
+
+        <div class="eh-section">
                 <div class="eh-section-header">
                     <span class="step-label"><?php echo esc_html__('Stap 2', 'event-hub'); ?></span>
                     <div>
@@ -757,6 +1132,64 @@ class CPT_Session
             }
         });
         </script>
+        <?php
+    }
+
+    public function render_sticky_savebar(): void
+    {
+        $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+        if (!$screen || $screen->base !== 'post' || $screen->post_type !== $this->get_cpt()) {
+            return;
+        }
+        ?>
+        <div class="eh-sticky-savebar">
+            <div class="eh-savebar-inner">
+                <div class="eh-savebar-left">
+                    <strong><?php echo esc_html__('Event opslaan', 'event-hub'); ?></strong>
+                    <span><?php echo esc_html__('Wijzigingen worden toegepast na opslaan.', 'event-hub'); ?></span>
+                </div>
+                <div class="eh-savebar-actions">
+                    <button type="button" class="button" id="eh-preview-btn"><?php echo esc_html__('Voorbeeld', 'event-hub'); ?></button>
+                    <button type="button" class="button button-primary" id="eh-save-btn"><?php echo esc_html__('Opslaan', 'event-hub'); ?></button>
+                </div>
+            </div>
+        </div>
+        <script>
+        (function(){
+            const saveBtn = document.getElementById('eh-save-btn');
+            const previewBtn = document.getElementById('eh-preview-btn');
+            const publish = document.getElementById('publish');
+            const preview = document.getElementById('post-preview');
+            if (saveBtn && publish) {
+                saveBtn.addEventListener('click', function(e){
+                    e.preventDefault();
+                    publish.click();
+                });
+            }
+            if (previewBtn && preview) {
+                previewBtn.addEventListener('click', function(e){
+                    e.preventDefault();
+                    preview.click();
+                });
+            }
+        })();
+        </script>
+        <?php
+    }
+
+    public function maybe_notice_cpt_fallback(): void
+    {
+        if (!is_admin() || !current_user_can('manage_options')) {
+            return;
+        }
+        if (!get_transient('event_hub_cpt_fallback')) {
+            return;
+        }
+        delete_transient('event_hub_cpt_fallback');
+        ?>
+        <div class="notice notice-warning is-dismissible">
+            <p><?php esc_html_e('Het gekozen externe CPT werd niet gevonden. We zijn teruggevallen op de standaard Event Hub CPT (eh_session). Pas dit eventueel aan in de algemene instellingen.', 'event-hub'); ?></p>
+        </div>
         <?php
     }
 
@@ -1154,6 +1587,40 @@ class CPT_Session
         $no_show_fee= isset($_POST['_eh_no_show_fee']) ? floatval((string) $_POST['_eh_no_show_fee']) : '';
         $ticket_note = isset($_POST['_eh_ticket_note']) ? wp_kses_post((string) $_POST['_eh_ticket_note']) : '';
         $color      = isset($_POST['_eh_color']) ? sanitize_hex_color((string) $_POST['_eh_color']) : '#2271b1';
+        $use_local_builder = isset($_POST['_eh_use_local_builder']) ? 1 : 0;
+        $builder_local = isset($_POST['_eh_builder_sections']) ? (string) $_POST['_eh_builder_sections'] : '';
+        $allowed_sections = ['status','hero','info','content','form','custom1','custom2','quote','faq','agenda','buttons','gallery','card','textblock'];
+        $clean_builder = '';
+        if ($builder_local !== '') {
+            $decoded = json_decode($builder_local, true);
+            $san = [];
+            if (is_array($decoded)) {
+                foreach ($decoded as $row) {
+                    $id = isset($row['id']) ? sanitize_key((string) $row['id']) : '';
+                    if ($id === '' || !in_array($id, $allowed_sections, true)) {
+                        continue;
+                    }
+                    $san[] = [
+                        'id' => $id,
+                        'title' => isset($row['title']) ? sanitize_text_field((string) $row['title']) : $id,
+                        'accent' => isset($row['accent']) ? sanitize_text_field((string) $row['accent']) : '',
+                        'bg' => isset($row['bg']) ? sanitize_text_field((string) $row['bg']) : '',
+                        'heading' => isset($row['heading']) ? sanitize_text_field((string) $row['heading']) : '',
+                        'cta' => isset($row['cta']) ? sanitize_text_field((string) $row['cta']) : '',
+                        'gradient' => isset($row['gradient']) ? sanitize_text_field((string) $row['gradient']) : '',
+                        'bgImage' => isset($row['bgImage']) ? esc_url_raw((string) $row['bgImage']) : '',
+                        'fontSize' => isset($row['fontSize']) ? (int) $row['fontSize'] : 16,
+                        'padding' => isset($row['padding']) ? (int) $row['padding'] : 16,
+                        'paddingMobile' => isset($row['paddingMobile']) ? (int) $row['paddingMobile'] : (isset($row['padding']) ? (int) $row['padding'] : 14),
+                        'variant' => isset($row['variant']) ? sanitize_text_field((string) $row['variant']) : 'default',
+                        'body' => isset($row['body']) ? wp_kses_post((string) $row['body']) : '',
+                    ];
+                }
+            }
+            if ($san) {
+                $clean_builder = wp_json_encode($san);
+            }
+        }
         $general = Settings::get_general();
         $colleagues_global = isset($general['colleagues']) && is_array($general['colleagues']) ? $general['colleagues'] : [];
         $colleagues_selected_raw = isset($_POST['eh_colleagues_selected']) ? (array) $_POST['eh_colleagues_selected'] : [];
@@ -1194,6 +1661,8 @@ class CPT_Session
         update_post_meta($post_id, '_eh_ticket_note', $ticket_note);
         update_post_meta($post_id, '_eh_color', $color ?: '#2271b1');
         update_post_meta($post_id, '_eh_use_builtin_page', $use_builtin_page_meta ? 1 : 0);
+        update_post_meta($post_id, '_eh_use_local_builder', $use_local_builder ? 1 : 0);
+        update_post_meta($post_id, '_eh_builder_sections', $clean_builder !== '' ? $clean_builder : '');
         update_post_meta($post_id, '_eh_colleagues', $colleagues);
         // E-mail sjablonen per fase
         $confirm = isset($_POST['_eh_email_confirm_templates']) ? array_map('intval', (array) $_POST['_eh_email_confirm_templates']) : [];
@@ -1215,6 +1684,53 @@ class CPT_Session
             update_post_meta($post_id, '_eh_email_custom_' . $key . '_subject', $subj);
             update_post_meta($post_id, '_eh_email_custom_' . $key . '_body', $body);
         }
+        // Extra velden bewaren
+        $extra_fields = [];
+        if (isset($_POST['eh_extra_fields']) && is_array($_POST['eh_extra_fields'])) {
+            $ef = $_POST['eh_extra_fields'];
+            $labels = $ef['label'] ?? [];
+            $slugs  = $ef['slug'] ?? [];
+            $types  = $ef['type'] ?? [];
+            $options_raw = $ef['options'] ?? [];
+            $required_raw = $ef['required'] ?? [];
+            foreach ($labels as $i => $label) {
+                $slug_raw = isset($slugs[$i]) ? (string) $slugs[$i] : '';
+                $slug = sanitize_key($slug_raw);
+                if ($slug === '' && $label !== '') {
+                    $slug = sanitize_key(sanitize_title($label));
+                }
+                if ($slug === '') {
+                    continue;
+                }
+                $type = isset($types[$i]) ? sanitize_key((string) $types[$i]) : 'text';
+                $allowed = ['text','textarea','select'];
+                if (!in_array($type, $allowed, true)) {
+                    $type = 'text';
+                }
+                $opts = [];
+                if ($type === 'select' && isset($options_raw[$i])) {
+                    $lines = preg_split('/\r\n|\r|\n/', (string) $options_raw[$i]);
+                    foreach ($lines as $line) {
+                        $line = trim($line);
+                        if ($line !== '') {
+                            $opts[] = $line;
+                        }
+                    }
+                }
+                $extra_fields[] = [
+                    'label' => sanitize_text_field((string) $label) ?: $slug,
+                    'slug' => $slug,
+                    'type' => $type,
+                    'required' => isset($required_raw[$i]),
+                    'options' => $opts,
+                ];
+            }
+        }
+        update_post_meta($post_id, '_eh_extra_fields', $extra_fields);
+        $hide_fields = isset($_POST['eh_hide_fields']) && is_array($_POST['eh_hide_fields'])
+            ? array_values(array_filter(array_map('sanitize_key', (array) $_POST['eh_hide_fields'])))
+            : [];
+        update_post_meta($post_id, '_eh_form_hide_fields', $hide_fields);
 
         // Recalculate capacity status and promote waitlist if needed after admin changes.
         $this->registrations->sync_session_status($post_id);
@@ -1294,3 +1810,11 @@ class CPT_Session
         return array_values(array_unique($ids));
     }
 }
+
+
+
+
+
+
+
+

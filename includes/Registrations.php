@@ -44,6 +44,7 @@ class Registrations
             'status' => 'registered',
             'consent_marketing' => 0,
             'waitlist_opt_in' => 0,
+            'extra' => [],
         ];
         $data = wp_parse_args($data, $defaults);
 
@@ -61,6 +62,7 @@ class Registrations
             'people_count' => max(1, (int) $data['people_count']),
             'status' => sanitize_text_field((string) $data['status']),
             'consent_marketing' => (int) !empty($data['consent_marketing']),
+            'extra_data' => null,
             'created_at' => current_time('mysql'),
             'updated_at' => current_time('mysql'),
         ];
@@ -128,11 +130,22 @@ class Registrations
             return new \WP_Error('duplicate', __('Je bent al ingeschreven voor dit event.', 'event-hub'));
         }
 
+        // Extra fields: validate against event config
+        $extra_fields = $this->get_extra_fields((int) $data['session_id']);
+        $extra_payload = $this->sanitize_extra_payload($extra_fields, $data['extra']);
+        if ($extra_payload instanceof \WP_Error) {
+            return $extra_payload;
+        }
+        if (!empty($extra_payload)) {
+            $data['extra_data'] = wp_json_encode($extra_payload);
+        }
+        unset($data['extra']);
+
         $inserted = $wpdb->insert(
             $this->table,
             $data,
             [
-                '%d','%s','%s','%s','%s','%s','%s','%s','%d','%s','%d','%s','%s'
+                '%d','%s','%s','%s','%s','%s','%s','%s','%d','%s','%d','%s','%s','%s'
             ]
         );
 
@@ -255,6 +268,7 @@ class Registrations
         $res = $wpdb->delete($this->table, ['id' => $id], ['%d']);
         if ($res !== false) {
             $this->sync_session_status((int) $existing['session_id']);
+            do_action('event_hub_registration_deleted', $id, $existing);
         }
         return $res !== false;
     }
@@ -461,6 +475,33 @@ class Registrations
             $params = $request->get_body_params();
         }
 
+        // Honeypot: if filled, treat as spam
+        if (!empty($params['_eh_hp'])) {
+            return new WP_REST_Response([
+                'success' => false,
+                'message' => __('Verzenden mislukt. Probeer opnieuw.', 'event-hub'),
+            ], 400);
+        }
+
+        // Basic rate limiting
+        $rate_error = $this->enforce_rate_limit();
+        if ($rate_error instanceof \WP_Error) {
+            return new WP_REST_Response([
+                'success' => false,
+                'message' => $rate_error->get_error_message(),
+            ], 429);
+        }
+
+        $extra = [];
+        foreach ($params as $key => $value) {
+            if (strpos((string) $key, 'extra[') === 0 && substr($key, -1) === ']') {
+                $slug = trim(substr((string) $key, 6, -1));
+                if ($slug !== '') {
+                    $extra[$slug] = $value;
+                }
+            }
+        }
+
         $data = [
             'session_id' => isset($params['session_id']) ? (int) $params['session_id'] : 0,
             'first_name' => sanitize_text_field($params['first_name'] ?? ''),
@@ -472,6 +513,7 @@ class Registrations
             'role' => isset($params['role']) ? sanitize_text_field((string) $params['role']) : null,
             'people_count' => isset($params['people_count']) ? (int) $params['people_count'] : 1,
             'consent_marketing' => !empty($params['consent_marketing']) ? 1 : 0,
+            'extra' => $extra,
         ];
 
         if (isset($params['captcha_token'])) {
@@ -528,5 +570,120 @@ class Registrations
             return ['label' => __('Wachtlijst', 'event-hub'), 'class' => 'eh-badge-waitlist'];
         }
         return ['label' => __('Beschikbaar', 'event-hub'), 'class' => 'eh-badge-available'];
+    }
+
+    /**
+     * @return array<int,array{label:string,slug:string,type:string,required:bool,options:array<string>,builtin:bool}>
+     */
+    /**
+     * Get extra field definitions for a session.
+     *
+     * @return array<int,array{label:string,slug:string,type:string,required:bool,options:array<string>,builtin:bool}>
+     */
+    public function get_extra_fields(int $session_id): array
+    {
+        $defs = get_post_meta($session_id, '_eh_extra_fields', true);
+        $out = [];
+        if (!is_array($defs)) {
+            return $out;
+        }
+        foreach ($defs as $def) {
+            $slug = isset($def['slug']) ? sanitize_key((string) $def['slug']) : '';
+            if ($slug === '') {
+                continue;
+            }
+            $type = isset($def['type']) ? sanitize_key((string) $def['type']) : 'text';
+            $allowed = ['text','textarea','select'];
+            if (!in_array($type, $allowed, true)) {
+                $type = 'text';
+            }
+            $options = [];
+            if ($type === 'select' && !empty($def['options']) && is_array($def['options'])) {
+                foreach ($def['options'] as $opt) {
+                    $opt = trim((string) $opt);
+                    if ($opt !== '') {
+                        $options[] = $opt;
+                    }
+                }
+            }
+            $out[] = [
+                'label' => isset($def['label']) ? sanitize_text_field((string) $def['label']) : $slug,
+                'slug' => $slug,
+                'type' => $type,
+                'required' => !empty($def['required']),
+                'options' => $options,
+                'builtin' => false,
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * Validate/sanitize extra payload.
+     *
+     * @param array $fields
+     * @param array $provided
+     * @return array|\WP_Error
+     */
+    private function sanitize_extra_payload(array $fields, $provided)
+    {
+        $provided = is_array($provided) ? $provided : [];
+        $clean = [];
+        foreach ($fields as $field) {
+            $slug = $field['slug'];
+            $val = $provided[$slug] ?? '';
+            if ($field['required'] && $val === '') {
+                return new \WP_Error('extra_required', sprintf(__('Veld "%s" is verplicht.', 'event-hub'), $field['label']));
+            }
+            if ($val === '') {
+                continue;
+            }
+            if ($field['type'] === 'select') {
+                $options = $field['options'] ?? [];
+                if ($options && !in_array($val, $options, true)) {
+                    return new \WP_Error('extra_invalid', sprintf(__('Ongeldige keuze voor "%s".', 'event-hub'), $field['label']));
+                }
+                $clean[$slug] = sanitize_text_field((string) $val);
+            } elseif ($field['type'] === 'textarea') {
+                $clean[$slug] = wp_kses_post((string) $val);
+            } else {
+                $clean[$slug] = sanitize_text_field((string) $val);
+            }
+        }
+        return $clean;
+    }
+
+    /**
+     * IP-based rate limiting for the REST registration endpoint.
+     * Allows 10 requests per 10 minutes per IP; admins are exempt.
+     *
+     * @return true|\WP_Error
+     */
+    private function enforce_rate_limit()
+    {
+        if (is_user_logged_in() && current_user_can('manage_options')) {
+            return true;
+        }
+        $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+        $ip = sanitize_text_field($ip);
+        if ($ip === '') {
+            return true;
+        }
+        $limit = apply_filters('event_hub_rate_limit_count', 10);
+        $window = apply_filters('event_hub_rate_limit_window', 10 * MINUTE_IN_SECONDS);
+        $key = 'event_hub_rate_' . md5($ip);
+        $record = get_transient($key);
+        $now = time();
+        if (!is_array($record) || !isset($record['count'], $record['start']) || ($now - (int) $record['start']) > $window) {
+            $record = ['count' => 1, 'start' => $now];
+            set_transient($key, $record, $window);
+            return true;
+        }
+        if ((int) $record['count'] >= $limit) {
+            return new \WP_Error('rate_limited', __('Te veel pogingen. Probeer het later opnieuw.', 'event-hub'));
+        }
+        $record['count'] = (int) $record['count'] + 1;
+        set_transient($key, $record, $window);
+        return true;
     }
 }

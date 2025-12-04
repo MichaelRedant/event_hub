@@ -716,6 +716,7 @@ class Widget_Session_Detail extends Widget_Base
         $button_label = !empty($settings['submit_label']) ? $settings['submit_label'] : __('Inschrijven', 'event-hub');
         $success_message_text = !empty($settings['success_message']) ? $settings['success_message'] : __('Bedankt! We hebben je inschrijving ontvangen.', 'event-hub');
         $show_marketing = !empty($settings['show_marketing_optin']) && $settings['show_marketing_optin'] === 'yes';
+        $hide_fields = $this->get_form_hide_fields($session_id);
 
         wp_enqueue_script('event-hub-frontend');
 
@@ -773,6 +774,7 @@ class Widget_Session_Detail extends Widget_Base
                 'people_count' => isset($_POST['people_count']) ? (int) $_POST['people_count'] : 1,
                 'consent_marketing' => isset($_POST['consent_marketing']) ? 1 : 0,
                 'waitlist_opt_in' => $waitlist_mode ? 1 : 0,
+                'extra' => isset($_POST['extra']) && is_array($_POST['extra']) ? $_POST['extra'] : [],
             ];
             $result = $this->registrations->create_registration($data);
             if (is_wp_error($result)) {
@@ -806,12 +808,48 @@ class Widget_Session_Detail extends Widget_Base
         echo $this->input('first_name', __('Voornaam', 'event-hub'), true);
         echo $this->input('last_name', __('Familienaam', 'event-hub'), true);
         echo $this->input('email', __('E-mailadres', 'event-hub'), true, 'email');
-        echo $this->input('phone', __('Telefoon', 'event-hub'));
-        echo $this->input('company', __('Bedrijf', 'event-hub'));
-        echo $this->input('vat', __('BTW-nummer', 'event-hub'));
-        echo $this->input('role', __('Rol', 'event-hub'));
-        echo $this->number('people_count', __('Aantal personen', 'event-hub'), $capacity > 0 ? $capacity : 99);
-        if ($show_marketing) {
+        if (!in_array('phone', $hide_fields, true)) {
+            echo $this->input('phone', __('Telefoon', 'event-hub'));
+        }
+        if (!in_array('company', $hide_fields, true)) {
+            echo $this->input('company', __('Bedrijf', 'event-hub'));
+        }
+        if (!in_array('vat', $hide_fields, true)) {
+            echo $this->input('vat', __('BTW-nummer', 'event-hub'));
+        }
+        if (!in_array('role', $hide_fields, true)) {
+            echo $this->input('role', __('Rol', 'event-hub'));
+        }
+        if (!in_array('people_count', $hide_fields, true)) {
+            echo $this->number('people_count', __('Aantal personen', 'event-hub'), $capacity > 0 ? $capacity : 99);
+        }
+        $extra_fields = $this->registrations->get_extra_fields($session_id);
+        foreach ($extra_fields as $field) {
+            $slug = $field['slug'];
+            $label = $field['label'];
+            $required_attr = $field['required'] ? 'required' : '';
+            $name = 'extra[' . $slug . ']';
+            $id = 'extra_' . $slug;
+            echo '<div class="field">';
+            echo '<label for="' . esc_attr($id) . '">' . esc_html($label . ($field['required'] ? ' *' : '')) . '</label>';
+            if ($field['type'] === 'textarea') {
+                $val = isset($_POST['extra'][$slug]) ? wp_kses_post((string) $_POST['extra'][$slug]) : '';
+                echo '<textarea name="' . esc_attr($name) . '" id="' . esc_attr($id) . '" rows="3" ' . $required_attr . '>' . esc_textarea($val) . '</textarea>';
+            } elseif ($field['type'] === 'select') {
+                $val = isset($_POST['extra'][$slug]) ? sanitize_text_field((string) $_POST['extra'][$slug]) : '';
+                echo '<select name="' . esc_attr($name) . '" id="' . esc_attr($id) . '" ' . $required_attr . '>';
+                echo '<option value="">' . esc_html__('Maak een keuze', 'event-hub') . '</option>';
+                foreach ($field['options'] as $opt) {
+                    echo '<option value="' . esc_attr($opt) . '"' . selected($val, $opt, false) . '>' . esc_html($opt) . '</option>';
+                }
+                echo '</select>';
+            } else {
+                $val = isset($_POST['extra'][$slug]) ? sanitize_text_field((string) $_POST['extra'][$slug]) : '';
+                echo '<input type="text" name="' . esc_attr($name) . '" id="' . esc_attr($id) . '" value="' . esc_attr($val) . '" ' . $required_attr . ' />';
+            }
+            echo '</div>';
+        }
+        if ($show_marketing && !in_array('marketing', $hide_fields, true)) {
             $checked = isset($_POST['consent_marketing']) ? ' checked' : '';
             echo '<div class="field full checkbox"><label><input type="checkbox" name="consent_marketing" value="1"' . $checked . ' /> ' . esc_html__('Ik wil marketingupdates ontvangen', 'event-hub') . '</label></div>';
         }
@@ -880,6 +918,17 @@ class Widget_Session_Detail extends Widget_Base
         $value = isset($_POST[$name]) ? (int) $_POST[$name] : 1;
         $value = max(1, $value);
         return '<div class="field"><label for="' . esc_attr($name) . '">' . esc_html($label) . '</label><input type="number" min="1" max="' . esc_attr((string) max(1, $max)) . '" name="' . esc_attr($name) . '" id="' . esc_attr($name) . '" value="' . esc_attr((string) $value) . '" /></div>';
+    }
+
+    /**
+     * Fields that should be hidden for this session.
+     *
+     * @return array<int,string>
+     */
+    protected function get_form_hide_fields(int $session_id): array
+    {
+        $meta = get_post_meta($session_id, '_eh_form_hide_fields', true);
+        return is_array($meta) ? array_map('sanitize_key', $meta) : [];
     }
 
     protected function render_captcha_fields(): void

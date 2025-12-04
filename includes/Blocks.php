@@ -1,0 +1,132 @@
+<?php
+namespace EventHub;
+
+defined('ABSPATH') || exit;
+
+class Blocks
+{
+    private CPT_Session $cpt;
+    private Registrations $registrations;
+
+    public function __construct(CPT_Session $cpt_session, Registrations $registrations)
+    {
+        $this->cpt = $cpt_session;
+        $this->registrations = $registrations;
+    }
+
+    public function register_blocks(): void
+    {
+        $script_handle = 'event-hub-blocks';
+        wp_register_script(
+            $script_handle,
+            EVENT_HUB_URL . 'assets/js/blocks.js',
+            ['wp-blocks', 'wp-element', 'wp-editor', 'wp-components', 'wp-i18n', 'wp-server-side-render', 'wp-block-editor'],
+            EVENT_HUB_VERSION,
+            true
+        );
+
+        // Detail block
+        register_block_type('event-hub/session-detail', [
+            'api_version' => 2,
+            'render_callback' => [$this, 'render_session_detail_block'],
+            'editor_script' => $script_handle,
+            'style' => 'event-hub-frontend-style',
+            'attributes' => [
+                'sessionId' => [
+                    'type' => 'integer',
+                    'default' => 0,
+                ],
+                'template' => [
+                    'type' => 'string',
+                    'default' => '',
+                ],
+            ],
+        ]);
+
+        // List block
+        register_block_type('event-hub/session-list', [
+            'api_version' => 2,
+            'render_callback' => [$this, 'render_session_list_block'],
+            'editor_script' => $script_handle,
+            'style' => 'event-hub-frontend-style',
+            'attributes' => [
+                'count' => [
+                    'type' => 'integer',
+                    'default' => 6,
+                ],
+                'status' => [
+                    'type' => 'string',
+                    'default' => '',
+                ],
+                'order' => [
+                    'type' => 'string',
+                    'default' => 'ASC',
+                ],
+                'showExcerpt' => [
+                    'type' => 'boolean',
+                    'default' => true,
+                ],
+                'showDate' => [
+                    'type' => 'boolean',
+                    'default' => true,
+                ],
+            ],
+        ]);
+    }
+
+    public function render_session_detail_block(array $attributes): string
+    {
+        $atts = [
+            'id' => isset($attributes['sessionId']) ? (int) $attributes['sessionId'] : 0,
+            'template' => isset($attributes['template']) ? (string) $attributes['template'] : '',
+        ];
+        return $this->cpt->render_session_shortcode($atts);
+    }
+
+    public function render_session_list_block(array $attributes): string
+    {
+        $count = isset($attributes['count']) ? max(1, (int) $attributes['count']) : 6;
+        $status = isset($attributes['status']) ? sanitize_text_field((string) $attributes['status']) : '';
+        $order = isset($attributes['order']) && in_array(strtoupper((string) $attributes['order']), ['ASC', 'DESC'], true)
+            ? strtoupper((string) $attributes['order'])
+            : 'ASC';
+        $show_excerpt = !empty($attributes['showExcerpt']);
+        $show_date = !empty($attributes['showDate']);
+
+        $query = new \WP_Query([
+            'post_type' => Settings::get_cpt_slug(),
+            'posts_per_page' => $count,
+            'orderby' => 'meta_value',
+            'meta_key' => '_eh_date_start',
+            'order' => $order,
+            'post_status' => 'publish',
+        ]);
+
+        if (!$query->have_posts()) {
+            return '<div class="eh-session-list-block no-results">' . esc_html__('Geen events gevonden.', 'event-hub') . '</div>';
+        }
+
+        ob_start();
+        echo '<div class="eh-session-list-block">';
+        while ($query->have_posts()) {
+            $query->the_post();
+            $session_id = get_the_ID();
+            $start = get_post_meta($session_id, '_eh_date_start', true);
+            $time = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : '';
+            $excerpt = $show_excerpt ? get_the_excerpt() : '';
+            echo '<article class="eh-session-card">';
+            echo '<h3 class="eh-session-title"><a href="' . esc_url(get_permalink()) . '">' . esc_html(get_the_title()) . '</a></h3>';
+            if ($show_date && $time) {
+                echo '<div class="eh-session-meta"><span class="eh-session-date">' . esc_html($time) . '</span></div>';
+            }
+            if ($excerpt) {
+                echo '<div class="eh-session-excerpt">' . esc_html($excerpt) . '</div>';
+            }
+            echo '<a class="eh-session-link" href="' . esc_url(get_permalink()) . '">' . esc_html__('Bekijk event', 'event-hub') . '</a>';
+            echo '</article>';
+        }
+        echo '</div>';
+        wp_reset_postdata();
+        return (string) ob_get_clean();
+    }
+}

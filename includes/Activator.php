@@ -12,10 +12,13 @@ class Activator
         if (!get_option('event_hub_email_settings')) {
             update_option('event_hub_email_settings', self::default_email_settings());
         }
+        update_option('event_hub_db_version', \EventHub\Migrations::DB_VERSION);
+        // Trigger first-run CPT chooser notice
+        set_transient('event_hub_show_cpt_prompt', 1, DAY_IN_SECONDS);
         self::seed_default_templates();
     }
 
-    private static function create_tables(): void
+    public static function create_tables(): void
     {
         global $wpdb;
         $charset_collate = $wpdb->get_charset_collate();
@@ -36,6 +39,7 @@ class Activator
             people_count int(11) NOT NULL DEFAULT 1,
             status varchar(32) NOT NULL DEFAULT 'registered',
             consent_marketing tinyint(1) NOT NULL DEFAULT 0,
+            extra_data longtext NULL,
             created_at datetime NOT NULL,
             updated_at datetime NOT NULL,
             PRIMARY KEY  (id),

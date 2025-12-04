@@ -48,10 +48,12 @@ class Emails
     ];
 
     private Registrations $registrations;
+    private ?Logger $logger = null;
 
-    public function __construct(Registrations $registrations)
+    public function __construct(Registrations $registrations, ?Logger $logger = null)
     {
         $this->registrations = $registrations;
+        $this->logger = $logger;
     }
 
     public function init(): void
@@ -232,6 +234,16 @@ class Emails
 
         if ($sent) {
             do_action('event_hub_email_sent', $type, (int) $reg['id']);
+        }
+        if ($this->logger) {
+            $this->logger->log('email', $sent ? 'E-mail verzonden' : 'E-mail verzenden mislukt', [
+                'registration_id' => $reg['id'] ?? '',
+                'session_id' => $session_id,
+                'type' => $type,
+                'to' => $reg['email'],
+                'subject' => $subject_f,
+                'result' => $sent ? 'sent' : 'failed',
+            ]);
         }
 
         return (bool) $sent;

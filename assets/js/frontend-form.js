@@ -24,6 +24,7 @@
             return;
         }
         wrapper.dataset.ehBound = '1';
+        ensureHoneypot(form);
 
         form.addEventListener('submit', (event) => {
             event.preventDefault();
@@ -44,6 +45,7 @@
         payload.session_id = parseInt(payload.session_id || form.dataset.ehevent || 0, 10);
         payload.people_count = parseInt(payload.people_count || '1', 10);
         payload.consent_marketing = formData.get('consent_marketing') ? 1 : 0;
+        payload._eh_hp = formData.get('_eh_hp') || '';
         const captchaField = document.getElementById('eh_captcha_token');
         payload.captcha_token = captchaField ? captchaField.value : '';
 
@@ -91,7 +93,22 @@
                 if (button) {
                     button.disabled = false;
                 }
-            });
+        });
+    };
+
+    const ensureHoneypot = (form) => {
+        if (!form.querySelector('input[name="_eh_hp"]')) {
+            const hp = document.createElement('input');
+            hp.type = 'text';
+            hp.name = '_eh_hp';
+            hp.value = '';
+            hp.tabIndex = -1;
+            hp.autocomplete = 'off';
+            hp.style.position = 'absolute';
+            hp.style.left = '-9999px';
+            hp.style.opacity = '0';
+            form.appendChild(hp);
+        }
     };
 
     const ensureFeedback = (wrapper) => {
