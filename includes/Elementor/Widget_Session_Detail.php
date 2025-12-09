@@ -121,6 +121,34 @@ class Widget_Session_Detail extends Widget_Base
             'label_block' => true,
         ]);
 
+        $this->add_control('hide_when_closed', [
+            'label' => __('Formulier verbergen als gesloten', 'event-hub'),
+            'type' => Controls_Manager::SWITCHER,
+            'return_value' => 'yes',
+            'default' => 'yes',
+        ]);
+
+        $this->add_control('closed_message', [
+            'label' => __('Melding bij gesloten', 'event-hub'),
+            'type' => Controls_Manager::TEXT,
+            'default' => __('Inschrijvingen zijn gesloten.', 'event-hub'),
+            'label_block' => true,
+        ]);
+
+        $this->add_control('closed_cta_label', [
+            'label' => __('Alternatieve knoplabel (gesloten)', 'event-hub'),
+            'type' => Controls_Manager::TEXT,
+            'default' => __('Contacteer ons', 'event-hub'),
+            'label_block' => true,
+        ]);
+
+        $this->add_control('closed_cta_url', [
+            'label' => __('Alternatieve knoplink (gesloten)', 'event-hub'),
+            'type' => Controls_Manager::URL,
+            'placeholder' => 'https://',
+            'label_block' => true,
+        ]);
+
         $this->add_control('success_message', [
             'label' => __('Succesbericht', 'event-hub'),
             'type' => Controls_Manager::TEXTAREA,
@@ -516,6 +544,9 @@ class Widget_Session_Detail extends Widget_Base
             return;
         }
 
+        $enable_module_meta = get_post_meta($session_id, '_eh_enable_module', true);
+        $module_enabled = ($enable_module_meta === '') ? true : (bool) $enable_module_meta;
+
         $accent = $this->get_accent_color($session_id);
 
         if ($this->preview_message && $this->is_editor_mode()) {
@@ -533,6 +564,7 @@ class Widget_Session_Detail extends Widget_Base
         }
         echo '</div>';
         $this->inline_styles();
+        $this->inline_validation_script();
     }
 
     protected function resolve_session_id(array $settings): int
@@ -695,6 +727,11 @@ class Widget_Session_Detail extends Widget_Base
         $event_start = get_post_meta($session_id, '_eh_date_start', true);
         $now = current_time('timestamp');
 
+        $hide_when_closed = !empty($settings['hide_when_closed']) && $settings['hide_when_closed'] === 'yes';
+        $closed_message_setting = !empty($settings['closed_message']) ? $settings['closed_message'] : __('Inschrijvingen zijn gesloten.', 'event-hub');
+        $closed_cta_label = !empty($settings['closed_cta_label']) ? $settings['closed_cta_label'] : '';
+        $closed_cta_url = !empty($settings['closed_cta_url']['url']) ? $settings['closed_cta_url']['url'] : '';
+
         $before_window = $booking_open && $now < strtotime($booking_open);
         $after_window = false;
         $after_window_reason = '';
@@ -733,7 +770,7 @@ class Widget_Session_Detail extends Widget_Base
                 $alert = __('Dit event werd geannuleerd.', 'event-hub');
                 $class = 'error';
             } elseif ($status === 'closed') {
-                $alert = __('Inschrijvingen zijn gesloten.', 'event-hub');
+                $alert = $closed_message_setting;
                 $class = 'error';
             } elseif ($is_full) {
                 $alert = __('Dit event is volzet.', 'event-hub');
@@ -742,15 +779,22 @@ class Widget_Session_Detail extends Widget_Base
                 $alert = __('De inschrijvingen zijn nog niet geopend.', 'event-hub');
                 $class = 'notice';
             } elseif ($after_window_reason === 'event_day') {
-                $alert = __('De inschrijvingen sloten op de dag van het event.', 'event-hub');
+                $alert = $closed_message_setting;
                 $class = 'notice';
             } else {
-                $alert = __('De inschrijvingen zijn afgesloten.', 'event-hub');
+                $alert = $closed_message_setting;
                 $class = 'notice';
             }
             echo '<div class="eh-alert ' . esc_attr($class) . '">' . esc_html($alert) . '</div>';
-            echo '</div>';
-            return;
+            if ($closed_cta_url) {
+                $label = $closed_cta_label ?: __('Contacteer ons', 'event-hub');
+                $target = !empty($settings['closed_cta_url']['is_external']) ? ' target="_blank" rel="noopener"' : '';
+                echo '<p><a class="eh-btn ghost" href="' . esc_url($closed_cta_url) . '"' . $target . '>' . esc_html($label) . '</a></p>';
+            }
+            if ($hide_when_closed) {
+                echo '</div>';
+                return;
+            }
         }
         if ($waitlist_mode) {
             echo '<div class="eh-alert notice">' . esc_html__('Dit event is volzet. Vul je gegevens in om op de wachtlijst te komen.', 'event-hub') . '</div>';
@@ -799,6 +843,7 @@ class Widget_Session_Detail extends Widget_Base
         }
 
         echo '<form method="post" class="eh-form" data-ehevent="' . esc_attr((string) $session_id) . '">';
+        echo '<div class="field" style="display:none !important;"><label>' . esc_html__('Laat leeg', 'event-hub') . '</label><input type="text" name="_eh_hp" value=""></div>';
         wp_nonce_field('eh_register_' . $session_id, 'eh_register_nonce');
         echo '<input type="hidden" name="session_id" value="' . esc_attr((string) $session_id) . '" />';
         if ($waitlist_mode) {
@@ -861,6 +906,51 @@ class Widget_Session_Detail extends Widget_Base
         echo '<button type="submit" class="eh-btn">' . esc_html($submit_label) . '</button>';
         echo '</form>';
         echo '</div>';
+    }
+
+    /**
+     * Lightweight client-side validation and submit feedback.
+     */
+    protected function inline_validation_script(): void
+    {
+        ?>
+        <script>
+        document.addEventListener('DOMContentLoaded', function(){
+            document.querySelectorAll('.eh-session-form form.eh-form').forEach(function(form){
+                var btn = form.querySelector('.eh-btn');
+                var feedback = form.querySelector('.eh-form-feedback');
+                form.addEventListener('submit', function(e){
+                    var required = form.querySelectorAll('[required]');
+                    var hasError = false;
+                    required.forEach(function(input){
+                        if (!input.value.trim()) {
+                            hasError = true;
+                            input.classList.add('eh-input-error');
+                        } else {
+                            input.classList.remove('eh-input-error');
+                        }
+                    });
+                    var email = form.querySelector('input[type="email"]');
+                    if (email && email.value && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.value)) {
+                        hasError = true;
+                        email.classList.add('eh-input-error');
+                    }
+                    if (hasError) {
+                        e.preventDefault();
+                        if (feedback) {
+                            feedback.textContent = feedback.dataset.error || 'Controleer de verplichte velden.';
+                            feedback.classList.add('error');
+                            feedback.style.display = 'block';
+                        }
+                        return false;
+                    }
+                    form.classList.add('eh-form--loading');
+                    if (btn) { btn.setAttribute('aria-busy', 'true'); }
+                });
+            });
+        });
+        </script>
+        <?php
     }
 
     protected function render_no_session_notice(): void
@@ -995,6 +1085,7 @@ class Widget_Session_Detail extends Widget_Base
         .eh-session-form .eh-btn:hover{opacity:.9;transform:translateY(-1px)}
         .eh-session-form .eh-form-feedback{margin-bottom:12px}
         .eh-session-form.eh-form--loading .eh-btn{opacity:.5;pointer-events:none}
+        .eh-form .eh-input-error{border-color:#ef4444}
         </style>';
     }
 }

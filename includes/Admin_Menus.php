@@ -2145,6 +2145,58 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
     }
 
+    /**
+     * Publieke variant voor frontend kalenderblokken (geen login nodig).
+     */
+    public function ajax_public_calendar_events(): void
+    {
+        $start = isset($_GET['start']) ? strtotime(sanitize_text_field((string) $_GET['start'])) : false;
+        $end   = isset($_GET['end']) ? strtotime(sanitize_text_field((string) $_GET['end'])) : false;
+
+        // Beperk query window om abuse te voorkomen.
+        $range_days = 120; // 4 maanden window
+        $now = time();
+        if (!$start) { $start = strtotime('-1 month', $now); }
+        if (!$end) { $end = strtotime('+' . $range_days . ' days', $now); }
+        if (($end - $start) > ($range_days * DAY_IN_SECONDS)) {
+            $end = $start + ($range_days * DAY_IN_SECONDS);
+        }
+
+        $args = [
+            'post_type'      => Settings::get_cpt_slug(),
+            'post_status'    => 'publish',
+            'posts_per_page' => -1,
+            'meta_query'     => [[
+                'key'     => '_eh_date_start',
+                'value'   => [gmdate('Y-m-d H:i:s', $start), gmdate('Y-m-d H:i:s', $end)],
+                'compare' => 'BETWEEN',
+                'type'    => 'DATETIME',
+            ]],
+        ];
+
+        $posts = get_posts($args);
+        $events = [];
+        foreach ($posts as $post) {
+            $date_start = get_post_meta($post->ID, '_eh_date_start', true);
+            if (!$date_start) {
+                continue;
+            }
+            $date_end = get_post_meta($post->ID, '_eh_date_end', true);
+            $color = sanitize_hex_color((string) get_post_meta($post->ID, '_eh_color', true)) ?: '#2271b1';
+            $events[] = [
+                'id'    => $post->ID,
+                'title' => $post->post_title,
+                'start' => date('c', strtotime($date_start)),
+                'end'   => $date_end ? date('c', strtotime($date_end)) : null,
+                'url'   => get_permalink($post->ID),
+                'backgroundColor' => $color,
+                'borderColor'     => $color,
+            ];
+        }
+
+        wp_send_json_success($events);
+    }
+
 
 
     private function export_registrations_csv(int $session_id, string $status, string $name): void
@@ -2166,7 +2218,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
         $rows = $this->fetch_registrations($session_id, $status, $name);
-
+        $colleagues_label = $this->get_event_colleagues_label($session_id);
         $extra_map = $this->collect_extra_field_map($rows);
 
         nocache_headers();
@@ -2180,35 +2232,21 @@ private function collect_stats(int $start_ts, int $end_ts): array
         $out = fopen('php://output', 'w');
 
         fputcsv($out, [
-
             'ID',
-
             'Event',
-
             'Voornaam',
-
             'Familienaam',
-
             'E-mail',
-
             'Status',
-
             'Personen',
-
             'Telefoon',
-
             'Bedrijf',
-
             'BTW',
-
             'Rol',
-
             'Marketing',
-
+            'Collega\'s',
             'Aangemaakt',
-
             ...array_values($extra_map),
-
         ]);
 
 
@@ -2239,6 +2277,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
             }
 
+            $colleagues_label = $this->get_event_colleagues_label((int) $row['session_id']);
+
             fputcsv($out, [
 
                 $row['id'],
@@ -2264,6 +2304,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 $row['role'],
 
                 $row['consent_marketing'] ? 'ja' : 'nee',
+
+                $colleagues_label,
 
                 $row['created_at'],
 
@@ -2369,6 +2411,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
             __('Marketing', 'event-hub'),
 
+            __('Collega\'s', 'event-hub'),
+
             __('Aangemaakt', 'event-hub'),
 
         ];
@@ -2419,6 +2463,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
                 }
 
+                $colleagues_label = $this->get_event_colleagues_label((int) $row['session_id']);
+
                 echo '<tr>';
 
                 echo '<td>' . esc_html($row['id']) . '</td>';
@@ -2444,6 +2490,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 echo '<td>' . esc_html($row['role']) . '</td>';
 
                 echo '<td>' . ($row['consent_marketing'] ? esc_html__('ja', 'event-hub') : esc_html__('nee', 'event-hub')) . '</td>';
+
+                echo '<td>' . esc_html($colleagues_label) . '</td>';
 
                 echo '<td>' . esc_html($row['created_at']) . '</td>';
 
@@ -2514,6 +2562,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
         $registrations = $this->registrations->get_registrations_by_session($event_id);
+        $colleagues_label = $this->get_event_colleagues_label($event_id);
+        $colleagues_label = $this->get_event_colleagues_label($event_id);
 
         $search = isset($_GET['eh_search']) ? sanitize_text_field((string) $_GET['eh_search']) : '';
 
@@ -3200,23 +3250,15 @@ private function collect_stats(int $start_ts, int $end_ts): array
         $out = fopen('php://output', 'w');
 
         fputcsv($out, [
-
             __('Voornaam', 'event-hub'),
-
             __('Familienaam', 'event-hub'),
-
             __('E-mail', 'event-hub'),
-
             __('Telefoon', 'event-hub'),
-
             __('Bedrijf', 'event-hub'),
-
             __('Aantal personen', 'event-hub'),
-
             __('Status', 'event-hub'),
-
+            __('Collega\'s', 'event-hub'),
             __('Aangemaakt', 'event-hub'),
-
         ]);
 
         foreach ($registrations as $row) {
@@ -3234,9 +3276,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 $row['company'],
 
                 $row['people_count'],
-
                 $row['status'],
-
+                $colleagues_label,
                 $row['created_at'],
 
             ]);
@@ -3247,6 +3288,34 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         exit;
 
+    }
+
+    /**
+     * Bouw een leesbare lijst van collega-namen die aan het event zijn gekoppeld.
+     */
+    private function get_event_colleagues_label(int $event_id): string
+    {
+        $general = Settings::get_general();
+        $global = isset($general['colleagues']) && is_array($general['colleagues']) ? $general['colleagues'] : [];
+        if (!$global) {
+            return '';
+        }
+        $selected = (array) get_post_meta($event_id, '_eh_colleagues', true);
+        if (!$selected) {
+            return '';
+        }
+        $names = [];
+        foreach ($selected as $cid) {
+            if (!isset($global[$cid])) {
+                continue;
+            }
+            $c = $global[$cid];
+            $name = trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? ''));
+            if ($name !== '') {
+                $names[] = $name;
+            }
+        }
+        return implode(', ', $names);
     }
 
 }

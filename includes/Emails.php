@@ -40,6 +40,9 @@ class Emails
         '{no_show_fee}'       => 'No-showkost',
         '{booking_open}'      => 'Datum waarop inschrijvingen openen',
         '{booking_close}'     => 'Datum waarop inschrijvingen sluiten',
+        '{agenda}'            => 'Agenda (per lijn)',
+        '{colleagues}'        => 'Collega blok (HTML)',
+        '{colleague_names}'   => 'Lijst met collega-namen',
 
         '{site_name}'         => 'Naam van de site',
         '{site_url}'          => 'URL van de site',
@@ -312,6 +315,7 @@ class Emails
         $date_str = $start ? date_i18n(get_option('date_format'), strtotime($start)) : '';
         $time_str = $start ? date_i18n(get_option('time_format'), strtotime($start)) : '';
         $end_time = $end ? date_i18n(get_option('time_format'), strtotime($end)) : '';
+        $colleagues = $this->format_colleagues($session_id);
 
         $map = [
             '{first_name}'        => $reg['first_name'] ?? '',
@@ -344,6 +348,9 @@ class Emails
             '{no_show_fee}'       => $meta('_eh_no_show_fee') !== '' ? (string) $meta('_eh_no_show_fee') : '',
             '{booking_open}'      => $meta('_eh_booking_open') ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($meta('_eh_booking_open'))) : '',
             '{booking_close}'     => $meta('_eh_booking_close') ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($meta('_eh_booking_close'))) : '',
+            '{agenda}'            => $this->format_agenda($meta('_eh_agenda')),
+            '{colleagues}'        => $colleagues['html'],
+            '{colleague_names}'   => $colleagues['names'],
 
             '{site_name}'         => get_bloginfo('name'),
             '{site_url}'          => home_url('/'),
@@ -359,6 +366,105 @@ class Emails
         }
 
         return $map;
+    }
+
+    /**
+     * Formatteer agenda meta naar HTML lijst (zonder scripts).
+     */
+    private function format_agenda($raw): string
+    {
+        if (!$raw) {
+            return '';
+        }
+        $lines = preg_split('/\r\n|\r|\n/', (string) $raw);
+        $clean = array_values(array_filter(array_map('trim', $lines)));
+        if (!$clean) {
+            return '';
+        }
+        $html = '<ul>';
+        foreach ($clean as $line) {
+            $html .= '<li>' . esc_html($line) . '</li>';
+        }
+        $html .= '</ul>';
+        return $html;
+    }
+
+    /**
+     * Formatteer gekoppelde collega’s als HTML en namenlijst voor e-mail.
+     *
+     * @return array{html:string,names:string}
+     */
+    private function format_colleagues(int $session_id): array
+    {
+        $out = ['html' => '', 'names' => ''];
+        $general = Settings::get_general();
+        $global = isset($general['colleagues']) && is_array($general['colleagues']) ? $general['colleagues'] : [];
+        if (!$global) {
+            return $out;
+        }
+        $selected = (array) get_post_meta($session_id, '_eh_colleagues', true);
+        if (!$selected) {
+            return $out;
+        }
+
+        $cards = [];
+        $names = [];
+        foreach ($selected as $cid) {
+            if (!isset($global[$cid])) {
+                continue;
+            }
+            $c = $global[$cid];
+            $name = trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? ''));
+            $role = $c['role'] ?? '';
+            $email = $c['email'] ?? '';
+            $phone = $c['phone'] ?? '';
+            $linkedin = $c['linkedin'] ?? '';
+            $bio = $c['bio'] ?? '';
+            $photo_id = (int) ($c['photo_id'] ?? 0);
+            $photo = $photo_id ? wp_get_attachment_image_url($photo_id, 'medium') : '';
+
+            if ($name !== '') {
+                $names[] = $name;
+            }
+
+            $card  = '<div class="eh-email-colleague" style="border:1px solid #e5e7eb;border-radius:12px;padding:10px;margin-bottom:8px;display:flex;gap:10px;align-items:flex-start;">';
+            if ($photo) {
+                $card .= '<div style="flex:0 0 56px;width:56px;height:56px;border-radius:12px;overflow:hidden;background:#f2f4f7;"><img src="' . esc_url($photo) . '" alt="' . esc_attr($name) . '" style="width:100%;height:100%;object-fit:cover;display:block;"></div>';
+            }
+            $card .= '<div style="flex:1;min-width:0;">';
+            if ($name !== '') {
+                $card .= '<div style="font-weight:700;color:#0f172a;">' . esc_html($name) . '</div>';
+            }
+            if ($role !== '') {
+                $card .= '<div style="color:#475569;font-size:13px;">' . esc_html($role) . '</div>';
+            }
+            if ($bio !== '') {
+                $card .= '<div style="color:#475569;font-size:13px;margin-top:4px;">' . wp_kses_post($bio) . '</div>';
+            }
+            if ($email || $phone || $linkedin) {
+                $card .= '<div style="color:#0f172a;font-size:13px;margin-top:6px;line-height:1.5;">';
+                if ($email) {
+                    $card .= '<div><a href="mailto:' . esc_attr($email) . '" style="color:#0ea5e9;text-decoration:none;">' . esc_html($email) . '</a></div>';
+                }
+                if ($phone) {
+                    $card .= '<div>' . esc_html($phone) . '</div>';
+                }
+                if ($linkedin) {
+                    $card .= '<div><a href="' . esc_url($linkedin) . '" style="color:#0ea5e9;text-decoration:none;">' . esc_html($linkedin) . '</a></div>';
+                }
+                $card .= '</div>';
+            }
+            $card .= '</div></div>';
+            $cards[] = $card;
+        }
+
+        if ($cards) {
+            $out['html'] = implode('', $cards);
+        }
+        if ($names) {
+            $out['names'] = implode(', ', $names);
+        }
+        return $out;
     }
 
     /**

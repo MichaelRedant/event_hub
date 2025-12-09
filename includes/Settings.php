@@ -81,6 +81,10 @@ class Settings
                 'recaptcha_site_key' => '',
                 'recaptcha_secret_key' => '',
                 'recaptcha_score' => 0.5,
+                'cpt_menu_label' => 'Evenementen',
+                'cpt_singular_label' => 'Evenement',
+                'cpt_menu_icon' => 'dashicons-calendar-alt',
+                'cpt_menu_position' => 20,
             ],
         ]);
 
@@ -110,6 +114,50 @@ class Settings
             }
             echo '</datalist>';
             echo '<p class="description">' . esc_html__('Begin te typen om beschikbare post types te zoeken. Kies het CPT waarin je events staan.', 'event-hub') . '</p>';
+        }, self::OPTION_GENERAL, 'eh_general_main');
+
+        add_settings_field('cpt_menu_label', __('CPT menu-label', 'event-hub'), function () {
+            $opts = get_option(self::OPTION_GENERAL, []);
+            $val = $opts['cpt_menu_label'] ?? 'Evenementen';
+            $name = self::OPTION_GENERAL . '[cpt_menu_label]';
+            echo '<input type="text" class="regular-text" name="' . esc_attr($name) . '" value="' . esc_attr((string) $val) . '" placeholder="bv. Evenementen" />';
+            echo '<p class="description">' . esc_html__('Tekst in het admin-menu.', 'event-hub') . '</p>';
+        }, self::OPTION_GENERAL, 'eh_general_main');
+
+        add_settings_field('cpt_singular_label', __('CPT enkelvoud label', 'event-hub'), function () {
+            $opts = get_option(self::OPTION_GENERAL, []);
+            $val = $opts['cpt_singular_label'] ?? 'Evenement';
+            $name = self::OPTION_GENERAL . '[cpt_singular_label]';
+            echo '<input type="text" class="regular-text" name="' . esc_attr($name) . '" value="' . esc_attr((string) $val) . '" placeholder="bv. Evenement" />';
+            echo '<p class="description">' . esc_html__('Wordt gebruikt in metaboxen en titels.', 'event-hub') . '</p>';
+        }, self::OPTION_GENERAL, 'eh_general_main');
+
+        add_settings_field('cpt_menu_icon', __('CPT icoon (dashicon)', 'event-hub'), function () {
+            $opts = get_option(self::OPTION_GENERAL, []);
+            $val = $opts['cpt_menu_icon'] ?? 'dashicons-calendar-alt';
+            $name = self::OPTION_GENERAL . '[cpt_menu_icon]';
+            $options = [
+                'dashicons-calendar-alt' => __('Kalender', 'event-hub'),
+                'dashicons-megaphone' => __('Megaphone', 'event-hub'),
+                'dashicons-tickets' => __('Tickets', 'event-hub'),
+                'dashicons-groups' => __('Groepen', 'event-hub'),
+                'dashicons-welcome-learn-more' => __('Leren', 'event-hub'),
+                'dashicons-clipboard' => __('Clipboard', 'event-hub'),
+            ];
+            echo '<select name="' . esc_attr($name) . '">';
+            foreach ($options as $opt_val => $opt_label) {
+                echo '<option value="' . esc_attr($opt_val) . '"' . selected($val, $opt_val, false) . '>' . esc_html($opt_label) . '</option>';
+            }
+            echo '</select>';
+            echo '<p class="description">' . esc_html__('Kies een Dashicon voor het menu.', 'event-hub') . '</p>';
+        }, self::OPTION_GENERAL, 'eh_general_main');
+
+        add_settings_field('cpt_menu_position', __('CPT menu-positie', 'event-hub'), function () {
+            $opts = get_option(self::OPTION_GENERAL, []);
+            $val = isset($opts['cpt_menu_position']) ? (int) $opts['cpt_menu_position'] : 20;
+            $name = self::OPTION_GENERAL . '[cpt_menu_position]';
+            echo '<input type="number" min="2" max="99" name="' . esc_attr($name) . '" value="' . esc_attr((string) $val) . '" />';
+            echo '<p class="description">' . esc_html__('Lagere cijfers komen hoger in het admin-menu. Voorbeeld: 5 = boven Berichten, 20 = standaard.', 'event-hub') . '</p>';
         }, self::OPTION_GENERAL, 'eh_general_main');
 
         add_settings_field('tax_slug', __('Eventtype-taxonomie-slug', 'event-hub'), function () {
@@ -148,15 +196,42 @@ class Settings
             echo '<p class="description">' . esc_html__('Kies de standaard layout voor de single event pagina. Thema-overrides blijven mogelijk.', 'event-hub') . '</p>';
         }, self::OPTION_GENERAL, 'eh_general_main');
 
-        // Eén blok voor HTML/CSS/JS met live preview (zwevend rechts).
+        // Eén blok voor HTML/CSS/JS met live preview (zwevend rechts) + placeholders lijst.
         add_settings_field('single_custom_code', __('Eigen template (HTML/CSS/JS)', 'event-hub'), function () {
             $opts = get_option(self::OPTION_GENERAL, []);
             $code = $opts['single_custom_code'] ?? '';
             $name = self::OPTION_GENERAL . '[single_custom_code]';
+            $placeholders = \EventHub\Emails::get_placeholder_reference();
             echo '<div style="display:flex;gap:20px;align-items:flex-start;">';
             echo '<div style="flex:1 1 55%;">';
-            echo '<textarea class="large-text code" rows="16" name="' . esc_attr($name) . '" id="eh-custom-code" placeholder="<!-- HTML -->&#10;<style>/* CSS */</style>&#10;<script>// JS</script>">' . esc_textarea((string) $code) . '</textarea>';
-            echo '<p class="description">' . esc_html__('Voeg hier je volledige markup toe (HTML + inline <style>/<script>). Wordt live in de preview rechts getoond.', 'event-hub') . '</p>';
+            echo '<textarea class="large-text code" rows="18" name="' . esc_attr($name) . '" id="eh-custom-code" placeholder="<!-- HTML -->&#10;<style>/* CSS */</style>&#10;<script>// JS</script>">' . esc_textarea((string) $code) . '</textarea>';
+            echo '<p class="description">' . esc_html__('Gebruik placeholders voor dynamische data. Dubbele accolades ({{title}}) of dezelfde tokens als in e-mailtemplates (bijv. {event_title}, {event_date}, {event_location}, {cta_link}). Inline <style>/<script> is toegestaan.', 'event-hub') . '</p>';
+            echo '<details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:600;">' . esc_html__('Beschikbare placeholders', 'event-hub') . '</summary>';
+            echo '<ul style="margin:10px 0 0 16px;columns:2;gap:12px;font-size:12px;">';
+            foreach ($placeholders as $token => $desc) {
+                echo '<li><code>' . esc_html($token) . '</code> — ' . esc_html($desc) . '</li>';
+            }
+            // Extra dubbele accolades varianten
+            $extra = [
+                '{{title}}' => __('Event titel', 'event-hub'),
+                '{{excerpt}}' => __('Korte beschrijving', 'event-hub'),
+                '{{date_range}}' => __('Datum + tijd bereik', 'event-hub'),
+                '{{date_start}}' => __('Start (datum+tijd)', 'event-hub'),
+                '{{date_end}}' => __('Einde (datum+tijd)', 'event-hub'),
+                '{{location}}' => __('Locatie/online', 'event-hub'),
+                '{{status_label}}' => __('Status label (badge)', 'event-hub'),
+                '{{status_class}}' => __('Status CSS class', 'event-hub'),
+                '{{hero_image}}' => __('Hero-afbeelding URL', 'event-hub'),
+                '{{cta_label}}' => __('CTA tekst', 'event-hub'),
+                '{{cta_link}}' => __('CTA link', 'event-hub'),
+                '{{availability}}' => __('Capaciteit label', 'event-hub'),
+                '{{waitlist}}' => __('Wachtlijst label', 'event-hub'),
+                '{{color}}' => __('Accentkleur', 'event-hub'),
+            ];
+            foreach ($extra as $token => $desc) {
+                echo '<li><code>' . esc_html($token) . '</code> — ' . esc_html($desc) . '</li>';
+            }
+            echo '</ul></details>';
             echo '</div>';
             echo '<div style="flex:1 1 45%; position:sticky; top:80px;">';
             echo '<div style="border:1px solid #e5e7eb;border-radius:12px;background:#f8fafc;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,.08);">';
@@ -239,11 +314,19 @@ class Settings
                 $last  = $colleague['last_name'] ?? '';
                 $role  = $colleague['role'] ?? '';
                 $photo = (int) ($colleague['photo_id'] ?? 0);
+                $email = $colleague['email'] ?? '';
+                $phone = $colleague['phone'] ?? '';
+                $linkedin = $colleague['linkedin'] ?? '';
+                $bio = $colleague['bio'] ?? '';
                 $count = $usage[$index] ?? 0;
                 echo '<div class="eh-colleague-row" data-index="' . esc_attr((string) $index) . '">';
                 echo '<div><label>' . esc_html__('Voornaam', 'event-hub') . '</label><input type="text" name="' . esc_attr(self::OPTION_GENERAL) . '[colleagues][' . esc_attr((string) $index) . '][first_name]" value="' . esc_attr($first) . '"></div>';
                 echo '<div><label>' . esc_html__('Familienaam', 'event-hub') . '</label><input type="text" name="' . esc_attr(self::OPTION_GENERAL) . '[colleagues][' . esc_attr((string) $index) . '][last_name]" value="' . esc_attr($last) . '"></div>';
                 echo '<div><label>' . esc_html__('Functie', 'event-hub') . '</label><input type="text" name="' . esc_attr(self::OPTION_GENERAL) . '[colleagues][' . esc_attr((string) $index) . '][role]" value="' . esc_attr($role) . '"></div>';
+                echo '<div><label>' . esc_html__('E-mail', 'event-hub') . '</label><input type="email" name="' . esc_attr(self::OPTION_GENERAL) . '[colleagues][' . esc_attr((string) $index) . '][email]" value="' . esc_attr($email) . '"></div>';
+                echo '<div><label>' . esc_html__('Tel', 'event-hub') . '</label><input type="text" name="' . esc_attr(self::OPTION_GENERAL) . '[colleagues][' . esc_attr((string) $index) . '][phone]" value="' . esc_attr($phone) . '"></div>';
+                echo '<div><label>' . esc_html__('LinkedIn/URL', 'event-hub') . '</label><input type="text" name="' . esc_attr(self::OPTION_GENERAL) . '[colleagues][' . esc_attr((string) $index) . '][linkedin]" value="' . esc_attr($linkedin) . '"></div>';
+                echo '<div style="grid-column:1/-1;"><label>' . esc_html__('Bio', 'event-hub') . '</label><textarea name="' . esc_attr(self::OPTION_GENERAL) . '[colleagues][' . esc_attr((string) $index) . '][bio]" rows="2" class="large-text">' . esc_textarea((string) $bio) . '</textarea></div>';
                 echo '<div class="eh-colleague-photo"><label>' . esc_html__('Foto', 'event-hub') . '</label>';
                 echo '<input type="hidden" class="eh-colleague-photo-id" name="' . esc_attr(self::OPTION_GENERAL) . '[colleagues][' . esc_attr((string) $index) . '][photo_id]" value="' . esc_attr((string) $photo) . '" />';
                 echo '<div class="eh-colleague-photo-preview">';
@@ -274,6 +357,22 @@ class Settings
                     <div>
                         <label><?php echo esc_html__('Functie', 'event-hub'); ?></label>
                         <input type="text" name="<?php echo esc_attr(self::OPTION_GENERAL); ?>[colleagues][__index__][role]" value="">
+                    </div>
+                    <div>
+                        <label><?php echo esc_html__('E-mail', 'event-hub'); ?></label>
+                        <input type="email" name="<?php echo esc_attr(self::OPTION_GENERAL); ?>[colleagues][__index__][email]" value="">
+                    </div>
+                    <div>
+                        <label><?php echo esc_html__('Tel', 'event-hub'); ?></label>
+                        <input type="text" name="<?php echo esc_attr(self::OPTION_GENERAL); ?>[colleagues][__index__][phone]" value="">
+                    </div>
+                    <div>
+                        <label><?php echo esc_html__('LinkedIn/URL', 'event-hub'); ?></label>
+                        <input type="text" name="<?php echo esc_attr(self::OPTION_GENERAL); ?>[colleagues][__index__][linkedin]" value="">
+                    </div>
+                    <div style="grid-column:1/-1;">
+                        <label><?php echo esc_html__('Bio', 'event-hub'); ?></label>
+                        <textarea name="<?php echo esc_attr(self::OPTION_GENERAL); ?>[colleagues][__index__][bio]" rows="2" class="large-text"></textarea>
                     </div>
                     <div class="eh-colleague-photo">
                         <label><?php echo esc_html__('Foto', 'event-hub'); ?></label>
@@ -395,6 +494,12 @@ class Settings
         $out['use_external_cpt'] = !empty($input['use_external_cpt']) ? 1 : 0;
         $out['cpt_slug'] = isset($input['cpt_slug']) ? sanitize_key((string) $input['cpt_slug']) : 'eh_session';
         $out['tax_slug'] = isset($input['tax_slug']) ? sanitize_key((string) $input['tax_slug']) : 'eh_session_type';
+        $out['cpt_menu_label'] = isset($input['cpt_menu_label']) ? sanitize_text_field((string) $input['cpt_menu_label']) : 'Evenementen';
+        $out['cpt_singular_label'] = isset($input['cpt_singular_label']) ? sanitize_text_field((string) $input['cpt_singular_label']) : 'Evenement';
+        $icon = isset($input['cpt_menu_icon']) ? sanitize_text_field((string) $input['cpt_menu_icon']) : 'dashicons-calendar-alt';
+        $out['cpt_menu_icon'] = (strpos($icon, 'dashicons-') === 0) ? $icon : 'dashicons-calendar-alt';
+        $pos = isset($input['cpt_menu_position']) ? (int) $input['cpt_menu_position'] : 20;
+        $out['cpt_menu_position'] = ($pos >= 2 && $pos <= 99) ? $pos : 20;
         $layout = $input['single_layout'] ?? 'modern';
         $out['single_layout'] = in_array($layout, ['modern', 'compact'], true) ? $layout : 'modern';
         $out['single_custom_enabled'] = 0;
@@ -422,12 +527,20 @@ class Settings
                 $first = isset($row['first_name']) ? sanitize_text_field((string) $row['first_name']) : '';
                 $last  = isset($row['last_name']) ? sanitize_text_field((string) $row['last_name']) : '';
                 $role  = isset($row['role']) ? sanitize_text_field((string) $row['role']) : '';
+                $email = isset($row['email']) ? sanitize_email((string) $row['email']) : '';
+                $phone = isset($row['phone']) ? sanitize_text_field((string) $row['phone']) : '';
+                $linkedin = isset($row['linkedin']) ? esc_url_raw((string) $row['linkedin']) : '';
+                $bio = isset($row['bio']) ? wp_kses_post((string) $row['bio']) : '';
                 $photo = isset($row['photo_id']) ? (int) $row['photo_id'] : 0;
-                if ($first || $last || $role || $photo) {
+                if ($first || $last || $role || $photo || $email || $phone || $linkedin || $bio) {
                     $out['colleagues'][] = [
                         'first_name' => $first,
                         'last_name'  => $last,
                         'role'       => $role,
+                        'email'      => $email,
+                        'phone'      => $phone,
+                        'linkedin'   => $linkedin,
+                        'bio'        => $bio,
                         'photo_id'   => $photo,
                     ];
                 }
@@ -442,6 +555,10 @@ class Settings
             'use_external_cpt' => 0,
             'cpt_slug' => 'eh_session',
             'tax_slug' => 'eh_session_type',
+            'cpt_menu_label' => 'Evenementen',
+            'cpt_singular_label' => 'Evenement',
+            'cpt_menu_icon' => 'dashicons-calendar-alt',
+            'cpt_menu_position' => 20,
             'single_layout' => 'modern',
             'single_custom_enabled' => 0,
             'single_custom_css' => '',
@@ -479,6 +596,20 @@ class Settings
     {
         $g = self::get_general();
         return !empty($g['use_external_cpt']);
+    }
+
+    /**
+     * Force back to the built-in CPT/tax when external slugs are missing.
+     * Prevents fatal errors when a referenced CPT (e.g. JetEngine) is disabled.
+     */
+    public static function fallback_to_builtin_cpt(): void
+    {
+        $general = self::get_general();
+        $general['use_external_cpt'] = 0;
+        $general['cpt_slug'] = 'eh_session';
+        $general['tax_slug'] = 'eh_session_type';
+        update_option(self::OPTION_GENERAL, $general);
+        set_transient('event_hub_cpt_fallback', 1, HOUR_IN_SECONDS);
     }
 
     public static function get_email_settings(): array

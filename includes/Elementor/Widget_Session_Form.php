@@ -79,5 +79,6 @@ class Widget_Session_Form extends Widget_Session_Detail
         $this->render_registration_form($session_id, $settings);
         echo '</div>';
         $this->inline_styles();
+        $this->inline_validation_script();
     }
 }

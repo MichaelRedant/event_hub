@@ -92,4 +92,38 @@
         },
         save: () => null,
     });
+
+    registerBlockType('event-hub/calendar', {
+        title: __('Event Hub - Kalender', 'event-hub'),
+        icon: 'schedule',
+        category: 'widgets',
+        attributes: {
+            initialView: { type: 'string', default: 'dayGridMonth' },
+        },
+        edit: ({ attributes, setAttributes }) => {
+            const { initialView } = attributes;
+            return (
+                <>
+                    <InspectorControls>
+                        <PanelBody title={__('Kalenderopties', 'event-hub')}>
+                            <SelectControl
+                                label={__('Startweergave', 'event-hub')}
+                                value={initialView}
+                                options={[
+                                    { label: __('Maand', 'event-hub'), value: 'dayGridMonth' },
+                                    { label: __('Week (tijd)', 'event-hub'), value: 'timeGridWeek' },
+                                    { label: __('Weeklijst', 'event-hub'), value: 'listWeek' },
+                                ]}
+                                onChange={(val) => setAttributes({ initialView: val })}
+                            />
+                        </PanelBody>
+                    </InspectorControls>
+                    <div className="eh-calendar-placeholder">
+                        {__('Volledige Octopus kalender wordt hier getoond op de site.', 'event-hub')}
+                    </div>
+                </>
+            );
+        },
+        save: () => null,
+    });
 })();

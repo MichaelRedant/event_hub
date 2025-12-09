@@ -72,6 +72,20 @@ class Blocks
                 ],
             ],
         ]);
+
+        // Full calendar block (Octopus style)
+        register_block_type('event-hub/calendar', [
+            'api_version'    => 2,
+            'render_callback'=> [$this, 'render_calendar_block'],
+            'editor_script'  => $script_handle,
+            'style'          => 'event-hub-frontend-style',
+            'attributes'     => [
+                'initialView' => [
+                    'type'    => 'string',
+                    'default' => 'dayGridMonth',
+                ],
+            ],
+        ]);
     }
 
     public function render_session_detail_block(array $attributes): string
@@ -127,6 +141,50 @@ class Blocks
         }
         echo '</div>';
         wp_reset_postdata();
+        return (string) ob_get_clean();
+    }
+
+    public function render_calendar_block(array $attributes): string
+    {
+        $view = isset($attributes['initialView']) ? sanitize_text_field((string) $attributes['initialView']) : 'dayGridMonth';
+        $allowed_views = ['dayGridMonth', 'timeGridWeek', 'listWeek'];
+        if (!in_array($view, $allowed_views, true)) {
+            $view = 'dayGridMonth';
+        }
+
+        // Enqueue FullCalendar (CDN fallback) + our frontend calendar script.
+        $fc_css = file_exists(EVENT_HUB_PATH . 'assets/vendor/fullcalendar/main.min.css')
+            ? EVENT_HUB_URL . 'assets/vendor/fullcalendar/main.min.css'
+            : 'https://cdn.jsdelivr.net/npm/fullcalendar@5.11.5/main.min.css';
+        $fc_js = file_exists(EVENT_HUB_PATH . 'assets/vendor/fullcalendar/index.global.min.js')
+            ? EVENT_HUB_URL . 'assets/vendor/fullcalendar/index.global.min.js'
+            : 'https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js';
+
+        wp_enqueue_style('event-hub-fullcalendar', $fc_css, [], EVENT_HUB_VERSION);
+        wp_enqueue_script('event-hub-fullcalendar', $fc_js, [], EVENT_HUB_VERSION, true);
+        wp_enqueue_script(
+            'event-hub-frontend-calendar',
+            EVENT_HUB_URL . 'assets/js/frontend-calendar.js',
+            ['event-hub-fullcalendar'],
+            EVENT_HUB_VERSION,
+            true
+        );
+
+        wp_localize_script('event-hub-frontend-calendar', 'EventHubPublicCalendar', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'view'    => $view,
+            'labels'  => [
+                'error' => __('Er ging iets mis bij het laden van events.', 'event-hub'),
+            ],
+        ]);
+
+        $id = 'eh-public-calendar-' . wp_generate_password(6, false, false);
+        ob_start();
+        ?>
+        <div class="eh-public-calendar-wrap">
+            <div id="<?php echo esc_attr($id); ?>" class="eh-public-calendar" data-initial-view="<?php echo esc_attr($view); ?>"></div>
+        </div>
+        <?php
         return (string) ob_get_clean();
     }
 }

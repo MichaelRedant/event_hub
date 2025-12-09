@@ -31,6 +31,11 @@ class Registrations
     {
         global $wpdb;
 
+        // Simple honeypot: reject if hidden field is filled.
+        if (isset($_POST['_eh_hp']) && trim((string) $_POST['_eh_hp']) !== '') {
+            return new \WP_Error('spam_detected', __('Ongeldige inzending.', 'event-hub'));
+        }
+
         $defaults = [
             'session_id' => 0,
             'first_name' => '',

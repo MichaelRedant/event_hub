@@ -28,27 +28,42 @@ class CPT_Session
 
     public function register_post_type(): void
     {
-        // If using external CPT, ensure it exists; otherwise fallback to built-in to avoid invalid post type errors.
+        $slug = $this->get_cpt();
+        $general = \EventHub\Settings::get_general();
+        $menu_label = isset($general['cpt_menu_label']) ? $general['cpt_menu_label'] : __('Evenementen', 'event-hub');
+        $singular_label = isset($general['cpt_singular_label']) ? $general['cpt_singular_label'] : __('Evenement', 'event-hub');
+        $menu_icon = isset($general['cpt_menu_icon']) ? $general['cpt_menu_icon'] : 'dashicons-calendar-alt';
+        $menu_position = isset($general['cpt_menu_position']) ? (int) $general['cpt_menu_position'] : 20;
+        if (strpos($menu_icon, 'dashicons-') !== 0) {
+            $menu_icon = 'dashicons-calendar-alt';
+        }
+
+        // If using an external CPT, only register ours when the target is missing.
         if (\EventHub\Settings::use_external_cpt()) {
-            $slug = $this->get_cpt();
             if (post_type_exists($slug)) {
                 return;
             }
             \EventHub\Settings::fallback_to_builtin_cpt();
+            $slug = $this->get_cpt();
+        }
+
+        // If another plugin/theme already registered this slug, avoid overriding args.
+        if (post_type_exists($slug)) {
+            return;
         }
 
         $labels = [
-            'name' => __('Evenementen', 'event-hub'),
-            'singular_name' => __('Evenement', 'event-hub'),
-            'add_new' => __('Nieuw toevoegen', 'event-hub'),
-            'add_new_item' => __('Nieuw evenement toevoegen', 'event-hub'),
-            'edit_item' => __('Evenement bewerken', 'event-hub'),
-            'new_item' => __('Nieuw evenement', 'event-hub'),
-            'view_item' => __('Evenement bekijken', 'event-hub'),
-            'search_items' => __('Evenementen zoeken', 'event-hub'),
-            'not_found' => __('Geen evenementen gevonden', 'event-hub'),
-            'not_found_in_trash' => __('Geen evenementen in prullenbak', 'event-hub'),
-            'menu_name' => __('Evenementen', 'event-hub'),
+            'name' => $menu_label,
+            'singular_name' => $singular_label,
+            'add_new' => sprintf(__('Nieuw %s toevoegen', 'event-hub'), strtolower($singular_label)),
+            'add_new_item' => sprintf(__('Nieuw %s toevoegen', 'event-hub'), strtolower($singular_label)),
+            'edit_item' => sprintf(__('%s bewerken', 'event-hub'), $singular_label),
+            'new_item' => sprintf(__('Nieuw %s', 'event-hub'), $singular_label),
+            'view_item' => sprintf(__('%s bekijken', 'event-hub'), $singular_label),
+            'search_items' => sprintf(__('%s zoeken', 'event-hub'), $menu_label),
+            'not_found' => sprintf(__('Geen %s gevonden', 'event-hub'), strtolower($menu_label)),
+            'not_found_in_trash' => sprintf(__('Geen %s in prullenbak', 'event-hub'), strtolower($menu_label)),
+            'menu_name' => $menu_label,
         ];
 
         $args = [
@@ -56,23 +71,31 @@ class CPT_Session
             'public' => true,
             'has_archive' => true,
             'show_in_rest' => false,
-            'menu_icon' => 'dashicons-calendar-alt',
+            'menu_icon' => $menu_icon,
+            'menu_position' => $menu_position,
             'supports' => ['title', 'editor', 'excerpt', 'thumbnail'],
-            'rewrite' => ['slug' => 'events'],
+            'rewrite' => ['slug' => $slug, 'with_front' => false],
             'taxonomies' => ['post_tag'],
         ];
-        register_post_type($this->get_cpt(), $args);
+        register_post_type($slug, $args);
     }
 
     public function register_taxonomies(): void
     {
+        $cpt = $this->get_cpt();
+        $tax = $this->get_tax();
         $labels = [
             'name' => __('Eventtypes', 'event-hub'),
             'singular_name' => __('Eventtype', 'event-hub'),
         ];
+        if (taxonomy_exists($tax)) {
+            // Ensure existing taxonomy is linked to the chosen CPT without re-registering.
+            register_taxonomy_for_object_type($tax, $cpt);
+            return;
+        }
         register_taxonomy(
-            $this->get_tax(),
-            [$this->get_cpt()],
+            $tax,
+            [$cpt],
             [
                 'labels' => $labels,
                 'public' => true,
@@ -410,14 +433,16 @@ class CPT_Session
         }
         $general = Settings::get_general();
         $custom_enabled = !empty($general['single_custom_enabled']);
-        $use_builtin = true;
+        $use_builtin_default = \EventHub\Settings::use_external_cpt() ? false : true;
+        $use_builtin = $use_builtin_default;
         if (is_singular() && get_the_ID()) {
             $use_builtin_meta = get_post_meta(get_the_ID(), '_eh_use_builtin_page', true);
-            $use_builtin = ($use_builtin_meta === '') ? true : (bool) $use_builtin_meta;
+            $use_builtin = ($use_builtin_meta === '') ? $use_builtin_default : (bool) $use_builtin_meta;
         }
-        if (!$use_builtin && defined('ELEMENTOR_PRO_VERSION')) {
+        if (!$use_builtin) {
             return $template;
         }
+        // Elementor Pro theme builder can override when checkbox off.
         if (locate_template('single-' . $this->get_cpt() . '.php')) {
             return $template;
         }
@@ -497,7 +522,8 @@ class CPT_Session
         $colleagues_global = isset($general['colleagues']) && is_array($general['colleagues']) ? $general['colleagues'] : [];
         $colleagues = (array) get_post_meta($post->ID, '_eh_colleagues', true);
         $use_builtin_page_meta = get_post_meta($post->ID, '_eh_use_builtin_page', true);
-        $use_builtin_page = ($use_builtin_page_meta === '') ? 1 : (int) $use_builtin_page_meta;
+        $use_builtin_default = \EventHub\Settings::use_external_cpt() ? 0 : 1;
+        $use_builtin_page = ($use_builtin_page_meta === '') ? $use_builtin_default : (int) $use_builtin_page_meta;
         $use_local_builder = (int) get_post_meta($post->ID, '_eh_use_local_builder', true);
         $builder_local = get_post_meta($post->ID, '_eh_builder_sections', true);
         $builder_local = $builder_local !== '' ? $builder_local : ($general['single_builder_sections'] ?? '[]');
@@ -824,6 +850,11 @@ class CPT_Session
                                 <label for="_eh_address"><?php echo esc_html__('Adres', 'event-hub'); ?></label>
                                 <input type="text" id="_eh_address" name="_eh_address" value="<?php echo esc_attr($address); ?>" class="regular-text">
                             </div>
+                            <div class="field full">
+                                <label for="_eh_agenda"><?php echo esc_html__('Agenda (per lijn)', 'event-hub'); ?></label>
+                                <textarea id="_eh_agenda" name="_eh_agenda" rows="3" class="large-text" placeholder="<?php echo esc_attr__('10:00 - Intro\n10:30 - Spreker', 'event-hub'); ?>"><?php echo esc_textarea(get_post_meta($post->ID, '_eh_agenda', true)); ?></textarea>
+                                <p class="description"><?php echo esc_html__('Elke lijn wordt als apart agendapunt getoond.', 'event-hub'); ?></p>
+                            </div>
                         </div>
                     </div>
                     <div class="eh-field-card">
@@ -855,6 +886,20 @@ class CPT_Session
                             <div class="field">
                                 <label for="_eh_color"><?php echo esc_html__('Accentkleur', 'event-hub'); ?></label>
                                 <input type="color" id="_eh_color" name="_eh_color" value="<?php echo esc_attr($color); ?>">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="eh-field-card">
+                        <div class="eh-field-card__head">
+                            <h3><?php echo esc_html__('Hero afbeelding (override)', 'event-hub'); ?></h3>
+                            <p><?php echo esc_html__('Optioneel: vervangt de uitgelichte afbeelding.', 'event-hub'); ?></p>
+                        </div>
+                        <div class="eh-form-two-col">
+                            <div class="field full">
+                                <?php $hero_override = get_post_meta($post->ID, '_eh_hero_image_override', true); ?>
+                                <input type="url" id="_eh_hero_image_override" name="_eh_hero_image_override" value="<?php echo esc_attr((string) $hero_override); ?>" class="regular-text" placeholder="https://">
+                                <button type="button" class="button" id="eh-hero-image-picker"><?php echo esc_html__('Kies/Upload', 'event-hub'); ?></button>
+                                <p class="description"><?php echo esc_html__('Laat leeg om de uitgelichte afbeelding te gebruiken.', 'event-hub'); ?></p>
                             </div>
                         </div>
                     </div>
@@ -1576,6 +1621,7 @@ class CPT_Session
         $is_online  = isset($_POST['_eh_is_online']) ? 1 : 0;
         $show_on_site = isset($_POST['_eh_show_on_site']) ? 1 : 0;
         $online_link = isset($_POST['_eh_online_link']) ? esc_url_raw((string) $_POST['_eh_online_link']) : '';
+        $agenda     = isset($_POST['_eh_agenda']) ? (string) $_POST['_eh_agenda'] : '';
         $capacity   = isset($_POST['_eh_capacity']) ? intval($_POST['_eh_capacity']) : '';
         $language   = isset($_POST['_eh_language']) ? sanitize_text_field((string) $_POST['_eh_language']) : '';
         $audience   = isset($_POST['_eh_target_audience']) ? sanitize_text_field((string) $_POST['_eh_target_audience']) : '';
@@ -1587,6 +1633,7 @@ class CPT_Session
         $no_show_fee= isset($_POST['_eh_no_show_fee']) ? floatval((string) $_POST['_eh_no_show_fee']) : '';
         $ticket_note = isset($_POST['_eh_ticket_note']) ? wp_kses_post((string) $_POST['_eh_ticket_note']) : '';
         $color      = isset($_POST['_eh_color']) ? sanitize_hex_color((string) $_POST['_eh_color']) : '#2271b1';
+        $hero_override = isset($_POST['_eh_hero_image_override']) ? esc_url_raw((string) $_POST['_eh_hero_image_override']) : '';
         $use_local_builder = isset($_POST['_eh_use_local_builder']) ? 1 : 0;
         $builder_local = isset($_POST['_eh_builder_sections']) ? (string) $_POST['_eh_builder_sections'] : '';
         $allowed_sections = ['status','hero','info','content','form','custom1','custom2','quote','faq','agenda','buttons','gallery','card','textblock'];
@@ -1646,6 +1693,8 @@ class CPT_Session
         update_post_meta($post_id, '_eh_is_online', $is_online);
         update_post_meta($post_id, '_eh_show_on_site', $show_on_site);
         update_post_meta($post_id, '_eh_online_link', $online_link);
+        update_post_meta($post_id, '_eh_agenda', $agenda);
+        update_post_meta($post_id, '_eh_hero_image_override', $hero_override);
         update_post_meta($post_id, '_eh_capacity', $capacity);
         update_post_meta($post_id, '_eh_enable_module', $enable_module_meta === '' ? 1 : (int) !empty($_POST['_eh_enable_module']));
         update_post_meta($post_id, '_eh_language', $language);

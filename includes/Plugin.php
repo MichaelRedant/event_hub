@@ -86,6 +86,8 @@ class Plugin
         add_action('admin_menu', [$this->admin_menus, 'register_menus']);
         add_action('admin_enqueue_scripts', [$this->admin_menus, 'enqueue_assets']);
         add_action('wp_ajax_event_hub_calendar_events', [$this->admin_menus, 'ajax_calendar_events']);
+        add_action('wp_ajax_event_hub_public_calendar', [$this->admin_menus, 'ajax_public_calendar_events']);
+        add_action('wp_ajax_nopriv_event_hub_public_calendar', [$this->admin_menus, 'ajax_public_calendar_events']);
 
         // Settings page
         add_action('admin_init', [$this->settings, 'register_settings']);

@@ -43,6 +43,7 @@ while (have_posts()) :
     $layout = $general['single_layout'] ?? 'modern';
     $layout_class = $layout === 'compact' ? 'layout-compact' : 'layout-modern';
     $builder_sections = [];
+    $custom_template = $general['single_custom_code'] ?? '';
     // Local builder override
     $use_local_builder = (int) get_post_meta($session_id, '_eh_use_local_builder', true);
     $builder_json = '';
@@ -65,14 +66,44 @@ while (have_posts()) :
         ? sprintf(_n('%d persoon', '%d personen', $waitlist_count, 'event-hub'), $waitlist_count)
         : __('Geen wachtlijst', 'event-hub');
     $location_label = $is_online ? __('Online', 'event-hub') : ($location ?: '');
-    $cta_label = $module_enabled
-        ? ($state['is_full'] ? __('Op wachtlijst', 'event-hub') : __('Inschrijven', 'event-hub'))
-        : __('Meer info', 'event-hub');
-    $cta_target = $module_enabled ? '#eh-register-form' : '#eh-details';
+    // Bepaal of inschrijvingen open zijn (na sluiting/event niet meer tonen).
+    $now = current_time('timestamp');
+    $start_ts = $date_start ? strtotime($date_start) : null;
+    $close_ts = $booking_close ? strtotime($booking_close) : null;
+    $open_ts = $booking_open ? strtotime($booking_open) : null;
+    $event_day_cutoff = $start_ts ? strtotime(date('Y-m-d 00:00:00', $start_ts)) : null;
+    $can_register = $module_enabled;
+    $register_notice = '';
+    if ($can_register) {
+        if (in_array($status, ['cancelled', 'closed'], true)) {
+            $can_register = false;
+            $register_notice = __('Inschrijvingen zijn gesloten.', 'event-hub');
+        } elseif ($open_ts && $now < $open_ts) {
+            $can_register = false;
+            $register_notice = sprintf(
+                __('Inschrijven kan vanaf %s.', 'event-hub'),
+                date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $open_ts)
+            );
+        } elseif (($close_ts && $now > $close_ts) || (!$close_ts && $event_day_cutoff && $now >= $event_day_cutoff)) {
+            $can_register = false;
+            $register_notice = __('Inschrijvingen zijn gesloten.', 'event-hub');
+        }
+    }
+    $cta_target = '#eh-register-form';
+    if (!$module_enabled) {
+        $cta_label = __('Meer info', 'event-hub');
+    } elseif (!$can_register) {
+        $cta_label = __('Inschrijvingen gesloten', 'event-hub');
+    } else {
+        $cta_label = $state['is_full'] ? __('Op wachtlijst', 'event-hub') : __('Inschrijven', 'event-hub');
+    }
 
     $badge = (new class {
-        public function render(string $status, bool $is_full): array
+        public function render(string $status, bool $is_full, ?string $start, ?string $end): array
         {
+            $now = current_time('timestamp');
+            $start_ts = $start ? strtotime($start) : null;
+            $end_ts   = $end ? strtotime($end) : null;
             if ($status === 'cancelled') {
                 return ['label' => __('Geannuleerd', 'event-hub'), 'class' => 'status-cancelled'];
             }
@@ -82,9 +113,15 @@ while (have_posts()) :
             if ($status === 'full' || $is_full) {
                 return ['label' => __('Wachtlijst', 'event-hub'), 'class' => 'status-full'];
             }
+            if ($start_ts && $end_ts && $now > $end_ts) {
+                return ['label' => __('Afgerond', 'event-hub'), 'class' => 'status-done'];
+            }
+            if ($start_ts && $now >= $start_ts && (!$end_ts || $now <= $end_ts)) {
+                return ['label' => __('Bezig', 'event-hub'), 'class' => 'status-live'];
+            }
             return ['label' => __('Beschikbaar', 'event-hub'), 'class' => 'status-open'];
         }
-    })->render($status, $state['is_full']);
+    })->render($status, $state['is_full'], $date_start, $date_end);
 
     $message = '';
     $error = '';
@@ -135,6 +172,175 @@ while (have_posts()) :
         $custom_after_details = !empty($general['single_custom_html_after_details']) ? do_shortcode(wp_kses_post((string) $general['single_custom_html_after_details'])) : '';
     }
 
+    // Als er een custom template is opgegeven, render die met placeholders.
+    $render_custom_template = function () use (
+        $custom_template,
+        $badge,
+        $hero_image,
+        $color,
+        $cta_label,
+        $cta_target,
+        $availability_label,
+        $waitlist_label,
+        $location_label,
+        $organizer,
+        $staff,
+        $price,
+        $booking_open,
+        $booking_close,
+        $date_start,
+        $date_end
+    ) {
+        if (!$custom_template) {
+            return;
+        }
+        $date_fmt = get_option('date_format');
+        $time_fmt = get_option('time_format');
+        $start_fmt = $date_start ? date_i18n($date_fmt . ' ' . $time_fmt, strtotime($date_start)) : '';
+        $end_fmt = $date_end ? date_i18n($date_fmt . ' ' . $time_fmt, strtotime($date_end)) : '';
+        $range = $start_fmt;
+        if ($date_end) {
+            $range .= ' - ' . date_i18n($time_fmt, strtotime($date_end));
+        }
+        $agenda_lines = get_post_meta(get_the_ID(), '_eh_agenda', true);
+        $agenda_html = '';
+        if ($agenda_lines) {
+            $lines = preg_split('/\r\n|\r|\n/', (string) $agenda_lines);
+            $clean = array_values(array_filter(array_map('trim', $lines)));
+            if ($clean) {
+                $agenda_html = '<ul class="eh-agenda">';
+                foreach ($clean as $line) {
+                    $agenda_html .= '<li>' . esc_html($line) . '</li>';
+                }
+                $agenda_html .= '</ul>';
+            }
+        }
+        $hero_override = get_post_meta(get_the_ID(), '_eh_hero_image_override', true);
+        if ($hero_override) {
+            $hero_image = $hero_override;
+        }
+        $colleagues_html = '';
+        $global_colleagues = Settings::get_general()['colleagues'] ?? [];
+        $selected = (array) get_post_meta(get_the_ID(), '_eh_colleagues', true);
+        if ($selected && $global_colleagues) {
+            $colleagues_html .= '<div class="eh-colleagues">';
+            foreach ($selected as $col_id) {
+                if (!isset($global_colleagues[$col_id])) {
+                    continue;
+                }
+                $c = $global_colleagues[$col_id];
+                $name = trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? ''));
+                $role = $c['role'] ?? '';
+                $bio  = $c['bio'] ?? '';
+                $photo_id = isset($c['photo_id']) ? (int) $c['photo_id'] : 0;
+                $photo_url = $photo_id ? wp_get_attachment_image_url($photo_id, 'thumbnail') : '';
+                $colleagues_html .= '<div class="eh-colleague">';
+                if ($photo_url) {
+                    $colleagues_html .= '<img class="eh-colleague__photo" src="' . esc_url($photo_url) . '" alt="' . esc_attr($name) . '">';
+                }
+                $colleagues_html .= '<div class="eh-colleague__info"><strong>' . esc_html($name) . '</strong>';
+                if ($role) {
+                    $colleagues_html .= '<div class="eh-colleague__role">' . esc_html($role) . '</div>';
+                }
+                if ($bio) {
+                    $colleagues_html .= '<div class="eh-colleague__bio">' . wp_kses_post($bio) . '</div>';
+                }
+                $colleagues_html .= '</div></div>';
+            }
+            $colleagues_html .= '</div>';
+        }
+        $colleague_names = '';
+        if ($colleagues_html) {
+            $colleague_names = implode(', ', array_map(static function ($sel) use ($global_colleagues) {
+                if (isset($global_colleagues[$sel])) {
+                    return trim(($global_colleagues[$sel]['first_name'] ?? '') . ' ' . ($global_colleagues[$sel]['last_name'] ?? ''));
+                }
+                return '';
+            }, $selected));
+            $colleague_names = trim($colleague_names, ' ,');
+        }
+        $map = [
+            // Dubbele accolades
+            '{{title}}' => get_the_title(),
+            '{{excerpt}}' => get_the_excerpt(),
+            '{{date_start}}' => $start_fmt,
+            '{{date_end}}' => $end_fmt,
+            '{{date_range}}' => $range,
+            '{{location}}' => $location_label,
+            '{{status_label}}' => $badge['label'] ?? '',
+            '{{status_class}}' => $badge['class'] ?? '',
+            '{{badge_class}}' => $badge['class'] ?? '',
+            '{{hero_image}}' => $hero_image ?: '',
+            '{{cta_label}}' => $cta_label,
+            '{{cta_link}}' => $cta_target,
+            '{{availability}}' => $availability_label,
+            '{{waitlist}}' => $waitlist_label,
+            '{{organizer}}' => $organizer ?: '',
+            '{{staff}}' => $staff ?: '',
+            '{{price}}' => $price !== '' ? (string) $price : '',
+            '{{booking_open}}' => $booking_open ? date_i18n($date_fmt, strtotime($booking_open)) : '',
+            '{{booking_close}}' => $booking_close ? date_i18n($date_fmt, strtotime($booking_close)) : '',
+            '{{color}}' => $color,
+            '{{agenda}}' => $agenda_html,
+            '{{colleagues}}' => $colleagues_html,
+            '{{capacity}}' => isset($state['capacity']) ? (string) $state['capacity'] : '',
+            '{{colleague_names}}' => $colleague_names,
+            // Enkele accolades (email placeholders)
+            '{event_title}'       => get_the_title(),
+            '{event_excerpt}'     => wp_strip_all_tags(get_the_excerpt()),
+            '{event_date}'        => $start_fmt,
+            '{event_time}'        => $date_start ? date_i18n(get_option('time_format'), strtotime($date_start)) : '',
+            '{event_end_time}'    => $date_end ? date_i18n(get_option('time_format'), strtotime($date_end)) : '',
+            '{event_location}'    => $location_label,
+            '{event_address}'     => $address ?: '',
+            '{event_online_link}' => $online_link ?: '',
+            '{event_language}'    => get_post_meta(get_the_ID(), '_eh_language', true) ?: '',
+            '{event_target}'      => get_post_meta(get_the_ID(), '_eh_target_audience', true) ?: '',
+            '{event_status}'      => $status,
+            '{event_link}'        => get_permalink(get_the_ID()),
+            '{organizer}'         => $organizer ?: '',
+            '{ticket_note}'       => $ticket_note ?: '',
+            '{price}'             => $price !== '' ? (string) $price : '',
+            '{no_show_fee}'       => get_post_meta(get_the_ID(), '_eh_no_show_fee', true) !== '' ? (string) get_post_meta(get_the_ID(), '_eh_no_show_fee', true) : '',
+            '{booking_open}'      => $booking_open ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($booking_open)) : '',
+            '{booking_close}'     => $booking_close ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($booking_close)) : '',
+            '{site_name}'         => get_bloginfo('name'),
+            '{site_url}'          => home_url('/'),
+            '{admin_email}'       => get_option('admin_email'),
+            '{current_date}'      => date_i18n(get_option('date_format')),
+            '{status_label}'      => $badge['label'] ?? '',
+            '{status_class}'      => $badge['class'] ?? '',
+            '{agenda}'            => $agenda_html,
+            '{colleagues}'        => $colleagues_html,
+            '{capacity}'          => isset($state['capacity']) ? (string) $state['capacity'] : '',
+            '{colleague_names}'   => $colleague_names,
+            // Basisregistratie placeholders leeg
+            '{first_name}'        => '',
+            '{last_name}'         => '',
+            '{full_name}'         => '',
+            '{email}'             => '',
+            '{phone}'             => '',
+            '{company}'           => '',
+            '{vat}'               => '',
+            '{role}'              => '',
+            '{people_count}'      => '',
+            '{registration_id}'   => '',
+            '{session_id}'        => (string) get_the_ID(),
+        ];
+        // Custom placeholders uit settings (zelfde als e-mail)
+        $custom = \EventHub\Settings::get_custom_placeholders();
+        if ($custom) {
+            foreach ($custom as $token => $value) {
+                $map[$token] = wp_strip_all_tags($value);
+            }
+        }
+        $html = strtr((string) $custom_template, $map);
+        // Verwijder onbekende placeholders, maar laat CSS/HTML intact.
+        $html = preg_replace('/\{\{[A-Za-z0-9_:\.-]+\}\}/', '', $html);
+        $html = preg_replace('/\{[A-Za-z0-9_:\.-]+\}/', '', $html);
+        echo do_shortcode($html);
+    };
+
     $render_section = function (string $id, array $style) use (
         $badge,
         $color,
@@ -145,6 +351,8 @@ while (have_posts()) :
         $cta_target,
         $cta_label,
         $module_enabled,
+        $can_register,
+        $register_notice,
         $state,
         $availability_label,
         $waitlist_label,
@@ -246,6 +454,8 @@ while (have_posts()) :
                 echo '<div class="eh-cta-bar"><a class="eh-btn" href="' . esc_url($cta_target) . '" style="background:' . esc_attr($accent_value) . ';">' . esc_html($style['cta'] ?? $cta_label) . '</a>';
                 if (!$module_enabled) {
                     echo '<span class="eh-single__hero-meta">' . esc_html__('Inschrijvingen verlopen extern.', 'event-hub') . '</span>';
+                } elseif (!$can_register) {
+                    echo '<span class="eh-single__hero-meta">' . esc_html($register_notice ?: __('Inschrijvingen zijn gesloten.', 'event-hub')) . '</span>';
                 } elseif ($state['is_full']) {
                     echo '<span class="eh-single__hero-meta">' . esc_html__('Volzet, wachtlijst mogelijk.', 'event-hub') . '</span>';
                 }
@@ -298,6 +508,8 @@ while (have_posts()) :
                 }
                 if (!$module_enabled) {
                     echo '<p class="eh-alert notice">' . esc_html__('Inschrijvingen voor dit event verlopen extern.', 'event-hub') . '</p>';
+                } elseif (!$can_register) {
+                    echo '<p class="eh-alert notice">' . esc_html($register_notice ?: __('Inschrijvingen zijn gesloten.', 'event-hub')) . '</p>';
                 } else {
                     echo '<form method="post" class="eh-form-grid">';
                     wp_nonce_field('eh_register_' . $session_id, 'eh_register_nonce');
@@ -391,7 +603,11 @@ while (have_posts()) :
     ?>
 <main class="eh-single <?php echo esc_attr($layout_class); ?>">
     <?php
-    if (!empty($builder_sections)) {
+    if ($custom_template) {
+        $render_custom_template();
+        // Toon altijd het standaard inschrijfformulier erna.
+        $render_section('form', ['accent' => $color]);
+    } elseif (!empty($builder_sections)) {
         foreach ($builder_sections as $section) {
             $render_section((string) $section['id'], is_array($section) ? $section : []);
         }
