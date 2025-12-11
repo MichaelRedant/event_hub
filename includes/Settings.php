@@ -25,8 +25,9 @@ class Settings
             ['from_name', __('Afzendernaam', 'event-hub'), 'text'],
             ['from_email', __('Afzender e-mail', 'event-hub'), 'email'],
             ['mail_transport', __('Mailtransport', 'event-hub'), 'select'],
-            ['reminder_offset_days', __('Herinnering (dagen voor start)', 'event-hub'), 'number'],
+            ['reminder_offset_hours', __('Herinnering (uren voor start)', 'event-hub'), 'number'],
             ['followup_offset_hours', __('Nadien (uren na einde)', 'event-hub'), 'number'],
+            ['cancel_cutoff_hours', __('Annuleren via link tot (uren voor start)', 'event-hub'), 'number'],
             ['custom_placeholders_raw', __('Eigen placeholders', 'event-hub'), 'textarea'],
         ];
 
@@ -478,7 +479,15 @@ class Settings
         $out['from_email'] = isset($input['from_email']) ? sanitize_email((string) $input['from_email']) : '';
         $transport = $input['mail_transport'] ?? 'php';
         $out['mail_transport'] = in_array($transport, ['php', 'smtp_plugin'], true) ? $transport : 'php';
-        $out['reminder_offset_days'] = isset($input['reminder_offset_days']) ? max(0, (int) $input['reminder_offset_days']) : 3;
+        // Reminder in uren, met fallback vanaf legacy dagenveld.
+        if (isset($input['reminder_offset_hours']) && $input['reminder_offset_hours'] !== '') {
+            $out['reminder_offset_hours'] = max(0, (int) $input['reminder_offset_hours']);
+        } elseif (isset($input['reminder_offset_days']) && $input['reminder_offset_days'] !== '') {
+            $out['reminder_offset_hours'] = max(0, (int) $input['reminder_offset_days']) * 24;
+        } else {
+            $out['reminder_offset_hours'] = 24;
+        }
+        $out['cancel_cutoff_hours'] = isset($input['cancel_cutoff_hours']) ? max(0, (int) $input['cancel_cutoff_hours']) : 24;
         $out['followup_offset_hours'] = isset($input['followup_offset_hours']) ? max(0, (int) $input['followup_offset_hours']) : 24;
         if (isset($input['custom_placeholders_raw'])) {
             $raw = (string) $input['custom_placeholders_raw'];

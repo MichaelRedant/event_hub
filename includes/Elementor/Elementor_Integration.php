@@ -32,6 +32,7 @@ class Elementor_Integration
         require_once EVENT_HUB_PATH . 'includes/Elementor/Widget_Colleagues.php';
         require_once EVENT_HUB_PATH . 'includes/Elementor/Widget_Session_Agenda.php';
         require_once EVENT_HUB_PATH . 'includes/Elementor/Widget_Session_Status.php';
+        require_once EVENT_HUB_PATH . 'includes/Elementor/Widget_Staff_Portal.php';
 
         Widget_Session_Detail::set_registrations_service($this->registrations);
         Widget_Session_Form::set_registrations_service($this->registrations);
@@ -47,6 +48,7 @@ class Elementor_Integration
         $widgets_manager->register(new Widget_Colleagues());
         $widgets_manager->register(new Widget_Session_Agenda());
         $widgets_manager->register(new Widget_Session_Status());
+        $widgets_manager->register(new Widget_Staff_Portal());
     }
 
     public function register_category(\Elementor\Elements_Manager $elements_manager): void

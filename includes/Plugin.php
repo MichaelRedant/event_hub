@@ -72,6 +72,7 @@ class Plugin
         add_action('init', [$this, 'register_shared_assets']);
         add_action('wp_enqueue_scripts', [$this, 'localize_frontend_assets']);
         add_action('elementor/editor/after_enqueue_scripts', [$this, 'localize_frontend_assets']);
+        add_action('template_redirect', [$this, 'maybe_handle_public_cancel']);
         add_action('init', [$this->blocks, 'register_blocks']);
         add_action('admin_init', [$this->cpt_session, 'register_admin_columns']);
         $this->maybe_enable_local_mailer();
@@ -91,6 +92,10 @@ class Plugin
 
         // Settings page
         add_action('admin_init', [$this->settings, 'register_settings']);
+
+        // Fallback runner voor herinneringen/follow-ups als WP-Cron niet draait.
+        add_action('init', [$this, 'maybe_run_due_email_events'], 1);
+        add_action('init', [$this, 'maybe_handle_event_hub_cron_request'], 0);
 
         // Emails: hooks and cron actions
         $this->emails->init();
@@ -117,6 +122,83 @@ class Plugin
                 $integration = new \EventHub\Elementor\Elementor_Integration($this->registrations);
                 $integration->init();
             }
+        }
+    }
+
+    /**
+     * Externe trigger (bv. uptime robot/cron ping) om due e-mails te versturen.
+     * Gebruik: ?event_hub_cron=1&key=JOUW_KEY
+     */
+    public function maybe_handle_event_hub_cron_request(): void
+    {
+        if (!isset($_GET['event_hub_cron'])) {
+            return;
+        }
+        $key = isset($_GET['key']) ? sanitize_text_field((string) $_GET['key']) : '';
+        $valid_key = $this->get_cron_key();
+        if ($key !== $valid_key) {
+            status_header(403);
+            exit('invalid key');
+        }
+        $this->maybe_run_due_email_events(true);
+        exit('ok');
+    }
+
+    private function get_cron_key(): string
+    {
+        $key = get_option('event_hub_cron_key', '');
+        if (!$key) {
+            $key = wp_generate_password(16, false);
+            update_option('event_hub_cron_key', $key);
+        }
+        return $key;
+    }
+
+    /**
+     * Run due reminder/follow-up events wanneer WP-Cron niet draait.
+     * Lichtgewicht: checkt enkel specifieke hooks en loopt max. 1x per 30s.
+     */
+    public function maybe_run_due_email_events(bool $force = false): void
+    {
+        if (defined('DOING_CRON') && DOING_CRON) {
+            return;
+        }
+        // Voorkom stampede.
+        if (!$force && get_transient('event_hub_cron_runner_lock')) {
+            return;
+        }
+        set_transient('event_hub_cron_runner_lock', 1, 30);
+
+        if (!function_exists('_get_cron_array')) {
+            require_once ABSPATH . 'wp-includes/cron.php';
+        }
+        $crons = _get_cron_array();
+        if (!$crons || !is_array($crons)) {
+            return;
+        }
+
+        $now = time();
+        $target_hooks = ['event_hub_send_reminder', 'event_hub_send_followup'];
+
+        foreach ($crons as $timestamp => $jobs) {
+            if ($timestamp > $now) {
+                break;
+            }
+            foreach ($jobs as $hook => $instances) {
+                if (!in_array($hook, $target_hooks, true)) {
+                    continue;
+                }
+                foreach ($instances as $instance) {
+                    $args = $instance['args'] ?? [];
+                    wp_unschedule_event($timestamp, $hook, $args);
+                    do_action($hook, ...$args);
+                }
+            }
+        }
+
+        // Extra fail-safe: forceer due reminders indien cron jobs ontbreken.
+        if (isset($this->emails) && method_exists($this->emails, 'force_due_reminders')) {
+            $this->emails->force_due_reminders();
         }
     }
 
@@ -151,6 +233,54 @@ class Plugin
                 'error' => __('Verzenden mislukt. Controleer je invoer en probeer opnieuw.', 'event-hub'),
             ],
         ]);
+    }
+
+    /**
+     * Publieke annuleringshandler via ?eh_cancel=token.
+     */
+    public function maybe_handle_public_cancel(): void
+    {
+        if (!isset($_GET['eh_cancel'])) {
+            return;
+        }
+        $token = sanitize_text_field((string) $_GET['eh_cancel']);
+        $result = $this->registrations->cancel_by_token($token);
+        $success = !is_wp_error($result);
+        $title = $success ? __('Inschrijving geannuleerd', 'event-hub') : __('Annulatie mislukt', 'event-hub');
+        $message = $success ? __('Je inschrijving werd geannuleerd. We hebben je plaats vrijgemaakt.', 'event-hub') : $result->get_error_message();
+        $redirect = $success && $result ? get_permalink((int) $result['session_id']) : home_url('/');
+        $redirect_label = $success ? __('Terug naar event', 'event-hub') : __('Ga naar de site', 'event-hub');
+
+        status_header($success ? 200 : 400);
+        nocache_headers();
+        ?>
+        <!doctype html>
+        <html <?php language_attributes(); ?>>
+        <head>
+            <meta charset="<?php bloginfo('charset'); ?>">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title><?php echo esc_html(get_bloginfo('name') . ' - ' . $title); ?></title>
+            <style>
+                body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f5f7;color:#111;padding:32px;margin:0;}
+                .eh-cancel-wrap{max-width:520px;margin:40px auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;box-shadow:0 10px 30px rgba(0,0,0,0.05);}
+                h1{margin-top:0;font-size:24px;}
+                p{line-height:1.5;font-size:15px;}
+                a.button{display:inline-block;margin-top:12px;padding:10px 16px;border-radius:8px;text-decoration:none;font-weight:600;}
+                .button-primary{background:#111;color:#fff;}
+                .button-secondary{background:#e5e7eb;color:#111;}
+            </style>
+        </head>
+        <body>
+            <div class="eh-cancel-wrap">
+                <h1><?php echo esc_html($title); ?></h1>
+                <p><?php echo esc_html($message); ?></p>
+                <a class="button button-primary" href="<?php echo esc_url($redirect); ?>"><?php echo esc_html($redirect_label); ?></a>
+                <a class="button button-secondary" href="<?php echo esc_url(home_url('/')); ?>"><?php esc_html_e('Ga naar de homepage', 'event-hub'); ?></a>
+            </div>
+        </body>
+        </html>
+        <?php
+        exit;
     }
 
     private function maybe_enable_local_mailer(): void
@@ -304,5 +434,8 @@ class Plugin
         add_action('event_hub_registration_deleted', function (int $id, array $reg) {
             $this->logger->log('registration', 'Inschrijving verwijderd', ['id' => $id, 'session_id' => $reg['session_id'] ?? '']);
         }, 10, 2);
+        add_action('event_hub_registration_cancelled', function (int $id) {
+            $this->logger->log('registration', 'Inschrijving geannuleerd via link', ['id' => $id]);
+        });
     }
 }

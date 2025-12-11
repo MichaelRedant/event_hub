@@ -1,0 +1,133 @@
+<?php
+namespace EventHub\Elementor;
+
+use Elementor\Widget_Base;
+use EventHub\Registrations;
+use EventHub\Settings;
+
+defined('ABSPATH') || exit;
+
+class Widget_Staff_Portal extends Widget_Base
+{
+    public function get_name(): string
+    {
+        return 'eventhub_staff_portal';
+    }
+
+    public function get_title(): string
+    {
+        return __('Medewerkersportaal', 'event-hub');
+    }
+
+    public function get_icon(): string
+    {
+        return 'eicon-lock-user';
+    }
+
+    public function get_categories(): array
+    {
+        return ['event-hub'];
+    }
+
+    public function get_script_depends(): array
+    {
+        return ['event-hub-staff-portal'];
+    }
+
+    public function get_style_depends(): array
+    {
+        return ['event-hub-staff-portal'];
+    }
+
+    protected function register_controls(): void
+    {
+        // Geen extra controls nodig: data komt vanuit PHP/REST.
+    }
+
+    protected function render(): void
+    {
+        $cpt = Settings::get_cpt_slug();
+        $events = get_posts([
+            'post_type' => $cpt,
+            'post_status' => 'publish',
+            'posts_per_page' => 100,
+            'orderby' => 'date',
+            'order' => 'DESC',
+        ]);
+
+        $registrations = new Registrations();
+        $fields = $registrations->get_export_fields();
+
+        if (!wp_script_is('event-hub-staff-portal', 'registered')) {
+            wp_register_script(
+                'event-hub-staff-portal',
+                EVENT_HUB_URL . 'assets/js/staff-portal.js',
+                [],
+                EVENT_HUB_VERSION,
+                true
+            );
+        }
+        wp_enqueue_script('event-hub-staff-portal');
+
+        if (!wp_style_is('event-hub-staff-portal', 'registered')) {
+            wp_register_style(
+                'event-hub-staff-portal',
+                EVENT_HUB_URL . 'assets/css/staff-portal.css',
+                [],
+                EVENT_HUB_VERSION
+            );
+        }
+        wp_enqueue_style('event-hub-staff-portal');
+
+        $rest_url = rest_url('event-hub/v1/registrations');
+        $nonce = wp_create_nonce('wp_rest');
+        $events_data = array_map(static function ($post) {
+            return [
+                'id' => (int) $post->ID,
+                'title' => $post->post_title,
+            ];
+        }, $events);
+
+        if (!$events_data) {
+            echo '<div class="eh-staff-portal-note">' . esc_html__('Geen events gevonden om te tonen.', 'event-hub') . '</div>';
+            return;
+        }
+
+        $data_attrs = sprintf(
+            'data-rest="%s" data-nonce="%s" data-events="%s" data-fields="%s"',
+            esc_url($rest_url),
+            esc_attr($nonce),
+            esc_attr(wp_json_encode($events_data)),
+            esc_attr(wp_json_encode($fields))
+        );
+        ?>
+        <div class="eh-staff-portal" <?php echo $data_attrs; ?>>
+            <div class="eh-sp-controls">
+                <label><?php esc_html_e('Kies event', 'event-hub'); ?>
+                    <select class="eh-sp-event">
+                        <option value=""><?php esc_html_e('Selecteer een event', 'event-hub'); ?></option>
+                        <?php foreach ($events_data as $event): ?>
+                            <option value="<?php echo esc_attr((string) $event['id']); ?>"><?php echo esc_html($event['title']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+            </div>
+            <div class="eh-sp-fields">
+                <p><strong><?php esc_html_e('Velden voor export/overzicht', 'event-hub'); ?></strong></p>
+                <div class="eh-sp-field-list"></div>
+            </div>
+            <div class="eh-sp-actions">
+                <button type="button" class="eh-sp-export-csv"><?php esc_html_e('Exporteer CSV', 'event-hub'); ?></button>
+                <button type="button" class="eh-sp-export-html"><?php esc_html_e('Open in nieuw venster (HTML)', 'event-hub'); ?></button>
+            </div>
+            <div class="eh-sp-status" aria-live="polite"></div>
+            <div class="eh-sp-table-wrap">
+                <table class="eh-sp-table">
+                    <thead></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+        <?php
+    }
+}

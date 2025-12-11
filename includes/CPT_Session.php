@@ -515,6 +515,7 @@ class CPT_Session
         $status = get_post_meta($post->ID, '_eh_status', true) ?: 'open';
         $booking_open = get_post_meta($post->ID, '_eh_booking_open', true);
         $booking_close = get_post_meta($post->ID, '_eh_booking_close', true);
+        $cancel_cutoff_hours = get_post_meta($post->ID, '_eh_cancel_cutoff_hours', true);
         $address = get_post_meta($post->ID, '_eh_address', true);
         $organizer = get_post_meta($post->ID, '_eh_organizer', true);
         $staff = get_post_meta($post->ID, '_eh_staff', true);
@@ -623,6 +624,11 @@ class CPT_Session
                                 <label for="_eh_booking_close"><?php echo esc_html__('Registraties sluiten', 'event-hub'); ?></label>
                                 <input type="datetime-local" id="_eh_booking_close" name="_eh_booking_close" value="<?php echo $bc_val; ?>">
                                 <p class="description"><?php echo esc_html__('Nuttig voor wachtlijsten of cateringdeadlines.', 'event-hub'); ?></p>
+                            </div>
+                            <div class="field">
+                                <label for="_eh_cancel_cutoff_hours"><?php echo esc_html__('Annuleren via link tot', 'event-hub'); ?></label>
+                                <input type="number" id="_eh_cancel_cutoff_hours" name="_eh_cancel_cutoff_hours" value="<?php echo esc_attr((string) $cancel_cutoff_hours); ?>" min="0" placeholder="<?php echo esc_attr__('Gebruik globale instelling', 'event-hub'); ?>">
+                                <p class="description"><?php echo esc_html__('Aantal uren voor de start waarin annuleren via de link nog mag. Leeg laten = globale instelling.', 'event-hub'); ?></p>
                             </div>
                             <div class="field">
                                 <label for="_eh_status"><?php echo esc_html__('Status', 'event-hub'); ?></label>
@@ -1012,6 +1018,14 @@ class CPT_Session
                     echo '<p>' . esc_html__('Je hebt nog geen e-mailsjablonen. Maak er eerst eentje aan.', 'event-hub') . '</p>';
                     echo '<p><a class="button button-secondary" href="' . $link . '">' . esc_html__('Nieuw e-mailsjabloon', 'event-hub') . '</a></p>';
                 } else {
+                    $reminder_hours_val = get_post_meta($post->ID, '_eh_reminder_offset_hours', true);
+                    if ($reminder_hours_val === '' || $reminder_hours_val === null) {
+                        $legacy_days = get_post_meta($post->ID, '_eh_reminder_offset_days', true);
+                        if ($legacy_days !== '' && $legacy_days !== null) {
+                            $reminder_hours_val = (int) $legacy_days * 24;
+                        }
+                    }
+
                     $email_cards = [
                         [
                             'key' => 'waitlist',
@@ -1047,10 +1061,10 @@ class CPT_Session
                             'select_name' => '_eh_email_reminder_templates',
                             'selected' => $sel_remind,
                             'timing' => [
-                                'name' => '_eh_reminder_offset_days',
-                                'label' => __('Dagen voor start', 'event-hub'),
-                                'value' => get_post_meta($post->ID, '_eh_reminder_offset_days', true),
-                                'placeholder' => '3',
+                                'name' => '_eh_reminder_offset_hours',
+                                'label' => __('Uren voor start', 'event-hub'),
+                                'value' => $reminder_hours_val,
+                                'placeholder' => '24',
                             ],
                             'badge' => __('Voor start', 'event-hub'),
                         ],
@@ -1617,6 +1631,7 @@ class CPT_Session
         $date_end   = isset($_POST['_eh_date_end']) ? sanitize_text_field((string) $_POST['_eh_date_end']) : '';
         $booking_open = isset($_POST['_eh_booking_open']) ? sanitize_text_field((string) $_POST['_eh_booking_open']) : '';
         $booking_close= isset($_POST['_eh_booking_close']) ? sanitize_text_field((string) $_POST['_eh_booking_close']) : '';
+        $cancel_cutoff_hours = isset($_POST['_eh_cancel_cutoff_hours']) && $_POST['_eh_cancel_cutoff_hours'] !== '' ? max(0, (int) $_POST['_eh_cancel_cutoff_hours']) : '';
         $location   = isset($_POST['_eh_location']) ? sanitize_text_field((string) $_POST['_eh_location']) : '';
         $is_online  = isset($_POST['_eh_is_online']) ? 1 : 0;
         $show_on_site = isset($_POST['_eh_show_on_site']) ? 1 : 0;
@@ -1702,6 +1717,7 @@ class CPT_Session
         update_post_meta($post_id, '_eh_status', $status);
         update_post_meta($post_id, '_eh_booking_open', $bo_store);
         update_post_meta($post_id, '_eh_booking_close', $bc_store);
+        update_post_meta($post_id, '_eh_cancel_cutoff_hours', $cancel_cutoff_hours);
         update_post_meta($post_id, '_eh_address', $address);
         update_post_meta($post_id, '_eh_organizer', $organizer);
         update_post_meta($post_id, '_eh_staff', $staff);
@@ -1722,9 +1738,16 @@ class CPT_Session
         update_post_meta($post_id, '_eh_email_reminder_templates', $remind);
         update_post_meta($post_id, '_eh_email_followup_templates', $follow);
         update_post_meta($post_id, '_eh_email_waitlist_templates', $waitlist);
-        $reminder_offset = isset($_POST['_eh_reminder_offset_days']) && $_POST['_eh_reminder_offset_days'] !== '' ? max(0, (int) $_POST['_eh_reminder_offset_days']) : '';
+        $reminder_offset_hours = '';
+        if (isset($_POST['_eh_reminder_offset_hours']) && $_POST['_eh_reminder_offset_hours'] !== '') {
+            $reminder_offset_hours = max(0, (int) $_POST['_eh_reminder_offset_hours']);
+        } elseif (isset($_POST['_eh_reminder_offset_days']) && $_POST['_eh_reminder_offset_days'] !== '') {
+            $reminder_offset_hours = max(0, (int) $_POST['_eh_reminder_offset_days']) * 24;
+        }
         $followup_offset = isset($_POST['_eh_followup_offset_hours']) && $_POST['_eh_followup_offset_hours'] !== '' ? max(0, (int) $_POST['_eh_followup_offset_hours']) : '';
-        update_post_meta($post_id, '_eh_reminder_offset_days', $reminder_offset);
+        $legacy_reminder_days = $reminder_offset_hours !== '' ? (int) ceil($reminder_offset_hours / 24) : '';
+        update_post_meta($post_id, '_eh_reminder_offset_hours', $reminder_offset_hours);
+        update_post_meta($post_id, '_eh_reminder_offset_days', $legacy_reminder_days);
         update_post_meta($post_id, '_eh_followup_offset_hours', $followup_offset);
         $custom_email_fields = ['confirmation','reminder','followup','waitlist','waitlist_promotion'];
         foreach ($custom_email_fields as $key) {

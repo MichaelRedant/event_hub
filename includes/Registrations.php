@@ -70,6 +70,7 @@ class Registrations
             'extra_data' => null,
             'created_at' => current_time('mysql'),
             'updated_at' => current_time('mysql'),
+            'cancel_token' => $this->generate_unique_cancel_token(),
         ];
         if (!isset(self::get_status_labels()[$data['status']])) {
             $data['status'] = $is_admin ? 'confirmed' : 'registered';
@@ -150,7 +151,7 @@ class Registrations
             $this->table,
             $data,
             [
-                '%d','%s','%s','%s','%s','%s','%s','%s','%d','%s','%d','%s','%s','%s'
+                '%d','%s','%s','%s','%s','%s','%s','%s','%d','%s','%d','%s','%s','%s','%s'
             ]
         );
 
@@ -169,6 +170,19 @@ class Registrations
     }
 
     /**
+     * Genereer een unieke annulatietoken per inschrijving.
+     */
+    private function generate_unique_cancel_token(): string
+    {
+        global $wpdb;
+        do {
+            $token = wp_generate_password(32, false, false);
+            $exists = $wpdb->get_var($wpdb->prepare("SELECT id FROM {$this->table} WHERE cancel_token = %s LIMIT 1", $token));
+        } while (!empty($exists));
+        return $token;
+    }
+
+    /**
      * @return array<string,string>
      */
     public static function get_status_labels(): array
@@ -181,6 +195,22 @@ class Registrations
             'no_show'    => __('No-show', 'event-hub'),
             'waitlist'   => __('Wachtlijst', 'event-hub'),
         ];
+    }
+
+    public function get_table(): string
+    {
+        return $this->table;
+    }
+
+    private function get_cancel_cutoff_hours(int $session_id): int
+    {
+        $meta_hours = get_post_meta($session_id, '_eh_cancel_cutoff_hours', true);
+        if ($meta_hours !== '' && $meta_hours !== null) {
+            return max(0, (int) $meta_hours);
+        }
+        $opts = get_option(Settings::OPTION, []);
+        $global = $opts['cancel_cutoff_hours'] ?? 24;
+        return max(0, (int) $global);
     }
 
     /**
@@ -202,6 +232,18 @@ class Registrations
     {
         global $wpdb;
         $sql = $wpdb->prepare("SELECT * FROM {$this->table} WHERE id = %d", $id);
+        $row = $wpdb->get_row($sql, ARRAY_A);
+        return $row ?: null;
+    }
+
+    /**
+     * @param string $token
+     * @return array|null
+     */
+    public function get_registration_by_token(string $token): ?array
+    {
+        global $wpdb;
+        $sql = $wpdb->prepare("SELECT * FROM {$this->table} WHERE cancel_token = %s", $token);
         $row = $wpdb->get_row($sql, ARRAY_A);
         return $row ?: null;
     }
@@ -276,6 +318,62 @@ class Registrations
             do_action('event_hub_registration_deleted', $id, $existing);
         }
         return $res !== false;
+    }
+
+    /**
+     * Annuleer een inschrijving via token (publieke link).
+     *
+     * @return array|\WP_Error
+     */
+    public function cancel_by_token(string $token)
+    {
+        $token = sanitize_text_field($token);
+        if ($token === '') {
+            return new \WP_Error('invalid_token', __('Annulatielink is ongeldig.', 'event-hub'));
+        }
+        $reg = $this->get_registration_by_token($token);
+        if (!$reg) {
+            return new \WP_Error('not_found', __('Inschrijving niet gevonden of al geannuleerd.', 'event-hub'));
+        }
+        if (($reg['status'] ?? '') === 'cancelled') {
+            return new \WP_Error('already_cancelled', __('Je inschrijving was al geannuleerd.', 'event-hub'));
+        }
+        $allowed = ['registered', 'confirmed', 'waitlist'];
+        if (!in_array($reg['status'], $allowed, true)) {
+            return new \WP_Error('invalid_status', __('Deze inschrijving kan niet meer geannuleerd worden.', 'event-hub'));
+        }
+        // Check cancel cutoff (uren voor start)
+        $cutoff_hours = $this->get_cancel_cutoff_hours((int) $reg['session_id']);
+        $start = get_post_meta((int) $reg['session_id'], '_eh_date_start', true);
+        if ($cutoff_hours > 0 && $start) {
+            $start_ts = strtotime($start);
+            if ($start_ts && current_time('timestamp') > ($start_ts - ($cutoff_hours * HOUR_IN_SECONDS))) {
+                return new \WP_Error('cancel_window_closed', sprintf(
+                    __('Annuleren via de link kan tot %d uur voor de start.', 'event-hub'),
+                    $cutoff_hours
+                ));
+            }
+        }
+
+        global $wpdb;
+        $updated = $wpdb->update(
+            $this->table,
+            [
+                'status' => 'cancelled',
+                'updated_at' => current_time('mysql'),
+            ],
+            ['id' => (int) $reg['id']],
+            ['%s', '%s'],
+            ['%d']
+        );
+        if ($updated === false) {
+            return new \WP_Error('db_error', __('Annulatie is mislukt. Probeer later opnieuw.', 'event-hub'));
+        }
+
+        $this->sync_session_status((int) $reg['session_id']);
+        do_action('event_hub_registration_cancelled', (int) $reg['id']);
+
+        return $this->get_registration((int) $reg['id']);
     }
 
     /**
@@ -471,6 +569,32 @@ class Registrations
             'callback' => [$this, 'handle_rest_register'],
             'permission_callback' => '__return_true',
         ]);
+        register_rest_route('event-hub/v1', '/registrations', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [$this, 'handle_rest_registrations'],
+            'permission_callback' => [$this, 'rest_can_manage_registrations'],
+            'args' => [
+                'session_id' => [
+                    'required' => true,
+                    'type' => 'integer',
+                ],
+                'fields' => [
+                    'required' => false,
+                    'type' => 'array',
+                ],
+            ],
+        ]);
+        register_rest_route('event-hub/v1', '/cancel', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [$this, 'handle_rest_cancel'],
+            'permission_callback' => '__return_true',
+            'args' => [
+                'token' => [
+                    'required' => true,
+                    'type' => 'string',
+                ],
+            ],
+        ]);
     }
 
     public function handle_rest_register(WP_REST_Request $request): WP_REST_Response
@@ -658,6 +782,83 @@ class Registrations
         return $clean;
     }
 
+    public function handle_rest_registrations(WP_REST_Request $request): WP_REST_Response
+    {
+        $session_id = (int) $request->get_param('session_id');
+        if ($session_id <= 0) {
+            return new WP_REST_Response([
+                'success' => false,
+                'message' => __('Event ID ontbreekt.', 'event-hub'),
+            ], 400);
+        }
+
+        $available = $this->get_export_fields();
+        $fields = $request->get_param('fields');
+        $fields = is_array($fields) ? array_map('sanitize_key', $fields) : [];
+        $fields = $fields ? array_values(array_intersect(array_keys($available), $fields)) : array_keys($available);
+
+        $rows = $this->get_registrations_by_session($session_id);
+        $registrations = [];
+        foreach ($rows as $row) {
+            $decoded_extra = [];
+            if (!empty($row['extra_data'])) {
+                $decoded = json_decode((string) $row['extra_data'], true);
+                if (is_array($decoded)) {
+                    $decoded_extra = $decoded;
+                }
+            }
+            $flat_extra = $this->format_extra_data($decoded_extra);
+            $record = [
+                'id' => (int) $row['id'],
+                'first_name' => $row['first_name'],
+                'last_name' => $row['last_name'],
+                'email' => $row['email'],
+                'phone' => $row['phone'],
+                'company' => $row['company'],
+                'vat' => $row['vat'],
+                'role' => $row['role'],
+                'people_count' => (int) $row['people_count'],
+                'status' => $row['status'],
+                'consent_marketing' => (int) $row['consent_marketing'],
+                'created_at' => $row['created_at'],
+                'updated_at' => $row['updated_at'],
+                'extra_data' => $flat_extra,
+            ];
+            $registrations[] = array_intersect_key($record, array_flip($fields));
+        }
+
+        return new WP_REST_Response([
+            'success' => true,
+            'fields' => $fields,
+            'available_fields' => $available,
+            'registrations' => $registrations,
+        ]);
+    }
+
+    public function handle_rest_cancel(WP_REST_Request $request): WP_REST_Response
+    {
+        $token = sanitize_text_field((string) $request->get_param('token'));
+        $result = $this->cancel_by_token($token);
+        if (is_wp_error($result)) {
+            return new WP_REST_Response([
+                'success' => false,
+                'message' => $result->get_error_message(),
+            ], 400);
+        }
+
+        return new WP_REST_Response([
+            'success' => true,
+            'message' => __('Je inschrijving werd geannuleerd.', 'event-hub'),
+            'registration_id' => (int) $result['id'],
+            'session_id' => (int) $result['session_id'],
+        ], 200);
+    }
+
+    public function rest_can_manage_registrations(): bool
+    {
+        return current_user_can('edit_posts');
+    }
+
     /**
      * IP-based rate limiting for the REST registration endpoint.
      * Allows 10 requests per 10 minutes per IP; admins are exempt.
@@ -690,5 +891,43 @@ class Registrations
         $record['count'] = (int) $record['count'] + 1;
         set_transient($key, $record, $window);
         return true;
+    }
+
+    /**
+     * Lijst van velden voor export/overzicht.
+     *
+     * @return array<string,string>
+     */
+    public function get_export_fields(): array
+    {
+        return [
+            'first_name' => __('Voornaam', 'event-hub'),
+            'last_name' => __('Familienaam', 'event-hub'),
+            'email' => __('E-mail', 'event-hub'),
+            'phone' => __('Telefoon', 'event-hub'),
+            'company' => __('Bedrijf', 'event-hub'),
+            'vat' => __('BTW', 'event-hub'),
+            'role' => __('Rol', 'event-hub'),
+            'people_count' => __('Aantal', 'event-hub'),
+            'status' => __('Status', 'event-hub'),
+            'created_at' => __('Aangemaakt op', 'event-hub'),
+            'extra_data' => __('Extra velden', 'event-hub'),
+        ];
+    }
+
+    private function format_extra_data(array $data): string
+    {
+        if (!$data) {
+            return '';
+        }
+        $lines = [];
+        foreach ($data as $key => $val) {
+            $label = is_string($key) ? $key : (string) $key;
+            if (is_array($val)) {
+                $val = implode(', ', $val);
+            }
+            $lines[] = $label . ': ' . wp_strip_all_tags((string) $val);
+        }
+        return implode(' | ', $lines);
     }
 }

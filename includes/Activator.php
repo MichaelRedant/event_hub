@@ -39,13 +39,15 @@ class Activator
             people_count int(11) NOT NULL DEFAULT 1,
             status varchar(32) NOT NULL DEFAULT 'registered',
             consent_marketing tinyint(1) NOT NULL DEFAULT 0,
+            cancel_token varchar(64) NULL,
             extra_data longtext NULL,
             created_at datetime NOT NULL,
             updated_at datetime NOT NULL,
             PRIMARY KEY  (id),
             KEY session_id (session_id),
             KEY status (status),
-            UNIQUE KEY uniq_session_email (session_id, email)
+            UNIQUE KEY uniq_session_email (session_id, email),
+            UNIQUE KEY uniq_cancel_token (cancel_token)
         ) $charset_collate;";
 
         dbDelta($sql);
@@ -56,8 +58,11 @@ class Activator
         return [
             'from_name' => get_bloginfo('name'),
             'from_email' => get_option('admin_email'),
+            // Legacy days key blijft staan voor backwards compat, maar we sturen op uren.
+            'reminder_offset_hours' => 24,
             'reminder_offset_days' => 3,
             'followup_offset_hours' => 24,
+            'cancel_cutoff_hours' => 24,
             'custom_placeholders_raw' => '',
             'custom_placeholders' => [],
         ];
@@ -79,12 +84,12 @@ class Activator
             [
                 'post_title' => __('Bevestiging standaard', 'event-hub'),
                 'subject'    => __('Je inschrijving voor {event_title}', 'event-hub'),
-                'body'       => __("Dag {first_name},\n\nBedankt voor je inschrijving voor {event_title} op {event_date} om {event_time}.\nLocatie: {event_location}\nOnline link: {event_online_link}\nAantal personen: {people_count}\n\nTot snel!\n{site_name}", 'event-hub'),
+                'body'       => __("Dag {first_name},\n\nBedankt voor je inschrijving voor {event_title} op {event_date} om {event_time}.\nLocatie: {event_location}\nOnline link: {event_online_link}\nAantal personen: {people_count}\n\nKan je toch niet komen? Annuleer hier: {cancel_link}\n\nTot snel!\n{site_name}", 'event-hub'),
             ],
             [
                 'post_title' => __('Herinnering standaard', 'event-hub'),
                 'subject'    => __('Herinnering: {event_title}', 'event-hub'),
-                'body'       => __("Dag {first_name},\n\nBinnenkort vindt {event_title} plaats op {event_date} om {event_time}.\nLocatie: {event_location}\nOnline link: {event_online_link}\n\nTot dan!\n{site_name}", 'event-hub'),
+                'body'       => __("Dag {first_name},\n\nBinnenkort vindt {event_title} plaats op {event_date} om {event_time}.\nLocatie: {event_location}\nOnline link: {event_online_link}\n\nKan je niet aanwezig zijn? Annuleer je deelname via: {cancel_link}\n\nTot dan!\n{site_name}", 'event-hub'),
             ],
             [
                 'post_title' => __('Bedankt standaard', 'event-hub'),

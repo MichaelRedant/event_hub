@@ -1,0 +1,59 @@
+/* Event Hub Staff Portal - modern layout */
+.eh-staff-portal{
+  background:linear-gradient(135deg,#0f172a 0%,#111827 50%,#0b1324 100%);
+  color:#e5e7eb;
+  border-radius:16px;
+  padding:24px;
+  box-shadow:0 20px 50px rgba(0,0,0,0.35);
+  border:1px solid rgba(255,255,255,0.06);
+  backdrop-filter:blur(6px);
+}
+.eh-sp-controls,
+.eh-sp-fields,
+.eh-sp-actions{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+  margin-bottom:16px;
+}
+.eh-sp-controls label{color:#cbd5e1;font-weight:600;font-size:14px;display:flex;gap:8px;align-items:center;}
+.eh-sp-controls select{
+  background:#0b1221;
+  color:#e5e7eb;
+  border:1px solid #1f2937;
+  padding:10px 12px;
+  border-radius:12px;
+  min-width:240px;
+  box-shadow:0 10px 30px rgba(0,0,0,0.3);
+}
+.eh-sp-fields{flex-direction:column;align-items:flex-start;border:1px solid rgba(255,255,255,0.08);padding:14px;border-radius:12px;background:rgba(255,255,255,0.02);}
+.eh-sp-fields p{margin:0;color:#e5e7eb;font-weight:700;letter-spacing:0.2px;}
+.eh-sp-field-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;}
+.eh-sp-field{background:#0b1221;border:1px solid #1f2937;color:#cbd5e1;padding:8px 10px;border-radius:999px;display:flex;align-items:center;gap:6px;font-size:13px;box-shadow:0 8px 20px rgba(0,0,0,0.25);}
+.eh-sp-field input{accent-color:#22d3ee;}
+.eh-sp-actions button{
+  background:linear-gradient(135deg,#06b6d4,#22d3ee);
+  color:#0b1221;
+  border:none;
+  border-radius:12px;
+  padding:10px 14px;
+  font-weight:700;
+  cursor:pointer;
+  box-shadow:0 15px 30px rgba(34,211,238,0.35);
+  transition:transform 0.15s ease,box-shadow 0.15s ease;
+}
+.eh-sp-actions button:hover{transform:translateY(-1px);box-shadow:0 18px 40px rgba(34,211,238,0.4);}
+.eh-sp-actions button:last-child{background:linear-gradient(135deg,#8b5cf6,#a855f7);color:#0b1221;box-shadow:0 15px 30px rgba(139,92,246,0.35);}
+.eh-sp-status{min-height:20px;font-size:13px;color:#a5f3fc;margin-bottom:10px;}
+.eh-sp-status.error{color:#fca5a5;}
+.eh-sp-table-wrap{overflow:auto;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);}
+.eh-sp-table{width:100%;border-collapse:collapse;color:#e5e7eb;font-size:13px;min-width:600px;}
+.eh-sp-table th,.eh-sp-table td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.06);}
+.eh-sp-table th{background:rgba(255,255,255,0.04);text-align:left;font-size:12px;letter-spacing:0.3px;text-transform:uppercase;color:#cbd5e1;}
+.eh-sp-table tr:hover td{background:rgba(34,211,238,0.05);}
+@media (max-width:768px){
+  .eh-staff-portal{padding:18px;}
+  .eh-sp-table{min-width:100%;}
+  .eh-sp-actions{flex-direction:column;align-items:flex-start;}
+}

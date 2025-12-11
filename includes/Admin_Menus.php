@@ -303,6 +303,29 @@ class Admin_Menus
         }
         echo '</div>';
 
+        $admin_email = get_option('admin_email');
+        echo '<div class="eh-card" style="margin-top:22px;max-width:720px;">';
+        echo '<h2 style="margin-top:0;">' . esc_html__('Over de maker', 'event-hub') . '</h2>';
+        echo '<p style="color:#52616b;margin:0 0 10px;">' . esc_html__('Event Hub is ontwikkeld en onderhouden door Michael Redant.', 'event-hub') . '</p>';
+        echo '<p style="color:#52616b;margin:0;">' . esc_html__('Vragen of feedback? Stuur gerust een bericht.', 'event-hub') . '</p>';
+        if ($admin_email) {
+            echo '<p style="margin:8px 0 0;"><strong>E-mail:</strong> <a href="mailto:' . esc_attr($admin_email) . '">' . esc_html($admin_email) . '</a></p>';
+        }
+        $cron_key = get_option('event_hub_cron_key', '');
+        if (!$cron_key) {
+            $cron_key = wp_generate_password(16, false);
+            update_option('event_hub_cron_key', $cron_key);
+        }
+        if ($cron_key) {
+            $cron_url = add_query_arg(['event_hub_cron' => 1, 'key' => $cron_key], home_url('/'));
+            echo '<div style="margin-top:12px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;background:#f8fafc;">';
+            echo '<strong>' . esc_html__('Cron-ping URL (extern aanroepen voor reminders):', 'event-hub') . '</strong><br>';
+            echo '<code style="word-break:break-all;">' . esc_html($cron_url) . '</code>';
+            echo '<p style="margin:6px 0 0;color:#52616b;font-size:12px;">' . esc_html__('Gebruik deze URL in een uptime/cron service (bv. elke minuut) om automatische e-mails exact op tijd te versturen, ook zonder WP-Cron.', 'event-hub') . '</p>';
+            echo '</div>';
+        }
+        echo '</div>';
+
         echo '</div>';
 
     }

@@ -9,7 +9,7 @@ defined('ABSPATH') || exit;
  */
 class Migrations
 {
-    public const DB_VERSION = '1.2.0';
+    public const DB_VERSION = '1.3.0';
     private const OPTION = 'event_hub_db_version';
 
     public function run(): void

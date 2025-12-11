@@ -43,6 +43,8 @@ class Emails
         '{agenda}'            => 'Agenda (per lijn)',
         '{colleagues}'        => 'Collega blok (HTML)',
         '{colleague_names}'   => 'Lijst met collega-namen',
+        '{cancel_link}'       => 'Publieke link voor de deelnemer om te annuleren',
+        '{cancel_link_html}'  => 'Klikbare HTML-link voor annulatie',
 
         '{site_name}'         => 'Naam van de site',
         '{site_url}'          => 'URL van de site',
@@ -80,14 +82,18 @@ class Emails
         // Send confirmation immediately
         $this->send_confirmation($registration_id);
 
-        // Schedule reminder X days before start
+        // Schedule reminder X hours before start (fallback to days for legacy).
         if ($start) {
             $ts = strtotime($start);
-            $event_days = get_post_meta($session_id, '_eh_reminder_offset_days', true);
-            $days = ($event_days === '' || $event_days === null) ? (int) ($opts['reminder_offset_days'] ?? 3) : (int) $event_days;
-            $reminder_ts = $ts - ($days * DAY_IN_SECONDS);
-            if ($reminder_ts > time()) {
+            $reminder_hours = $this->get_reminder_offset_hours($session_id, $opts);
+            if ($reminder_hours >= 0 && $ts > time()) {
+                $reminder_ts = $ts - ($reminder_hours * HOUR_IN_SECONDS);
+                // If the ideal time is already voorbij (bv. late inschrijving), stuur meteen.
+                if ($reminder_ts <= time()) {
+                    $reminder_ts = time() + MINUTE_IN_SECONDS;
+                }
                 wp_schedule_single_event($reminder_ts, 'event_hub_send_reminder', [$registration_id]);
+                $this->trigger_wp_cron_async();
             }
         }
 
@@ -100,6 +106,7 @@ class Emails
             $follow_ts = $ts + ($hours * HOUR_IN_SECONDS);
             if ($follow_ts > time()) {
                 wp_schedule_single_event($follow_ts, 'event_hub_send_followup', [$registration_id]);
+                $this->trigger_wp_cron_async();
             }
         }
     }
@@ -316,6 +323,16 @@ class Emails
         $time_str = $start ? date_i18n(get_option('time_format'), strtotime($start)) : '';
         $end_time = $end ? date_i18n(get_option('time_format'), strtotime($end)) : '';
         $colleagues = $this->format_colleagues($session_id);
+        $cancel_link = '';
+        $cancel_link_html = '';
+        if (!empty($reg['cancel_token'])) {
+            $cancel_link = add_query_arg('eh_cancel', rawurlencode((string) $reg['cancel_token']), home_url('/'));
+            $cancel_link_html = sprintf(
+                '<a href="%s">%s</a>',
+                esc_url($cancel_link),
+                esc_html__('Annuleer je inschrijving', 'event-hub')
+            );
+        }
 
         $map = [
             '{first_name}'        => $reg['first_name'] ?? '',
@@ -342,6 +359,8 @@ class Emails
             '{event_target}'      => $meta('_eh_target_audience') ?: '',
             '{event_status}'      => $meta('_eh_status') ?: 'open',
             '{event_link}'        => get_permalink($session_id),
+            '{cancel_link}'       => $cancel_link ? esc_url($cancel_link) : '',
+            '{cancel_link_html}'  => $cancel_link_html,
             '{organizer}'         => $meta('_eh_organizer') ?: '',
             '{ticket_note}'       => $meta('_eh_ticket_note') ?: '',
             '{price}'             => $meta('_eh_price') !== '' ? (string) $meta('_eh_price') : '',
@@ -366,6 +385,93 @@ class Emails
         }
 
         return $map;
+    }
+
+    /**
+     * Berekent reminder-offset in uren met legacy fallback (dagen).
+     */
+    private function get_reminder_offset_hours(int $session_id, array $opts): int
+    {
+        $meta_hours = get_post_meta($session_id, '_eh_reminder_offset_hours', true);
+        $meta_days  = get_post_meta($session_id, '_eh_reminder_offset_days', true); // legacy
+        if ($meta_hours !== '' && $meta_hours !== null) {
+            return max(0, (int) $meta_hours);
+        }
+        if ($meta_days !== '' && $meta_days !== null) {
+            return max(0, (int) $meta_days * 24);
+        }
+
+        $global_hours = $opts['reminder_offset_hours'] ?? null;
+        if ($global_hours !== null && $global_hours !== '') {
+            return max(0, (int) $global_hours);
+        }
+
+        $global_days = $opts['reminder_offset_days'] ?? 3; // legacy option
+        return max(0, (int) $global_days * 24);
+    }
+
+    /**
+     * Fail-safe: stuur herinneringen die vervallen zijn maar (nog) niet verzonden wegens cron issues.
+     * Gebruikt transients om dubbele verzending te vermijden.
+     */
+    public function force_due_reminders(): int
+    {
+        global $wpdb;
+        $sent = 0;
+        $now = current_time('timestamp');
+        $table = $this->registrations->get_table();
+        $rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, session_id, status FROM {$table} WHERE status IN ('registered','confirmed') AND session_id > 0"
+            ),
+            ARRAY_A
+        );
+        if (!$rows) {
+            return 0;
+        }
+        $opts = get_option(Settings::OPTION, []);
+        foreach ($rows as $row) {
+            $session_id = (int) $row['session_id'];
+            $start = get_post_meta($session_id, '_eh_date_start', true);
+            if (!$start) {
+                continue;
+            }
+            $start_ts = strtotime($start);
+            if (!$start_ts) {
+                continue;
+            }
+            $offset_hours = $this->get_reminder_offset_hours($session_id, $opts);
+            $due_ts = $start_ts - ($offset_hours * HOUR_IN_SECONDS);
+            if ($due_ts <= $now && $start_ts >= $now - 3600) { // niet te ver in het verleden
+                $key = 'event_hub_reminder_sent_' . $row['id'];
+                if (get_transient($key)) {
+                    continue;
+                }
+                $this->send_reminder((int) $row['id']);
+                set_transient($key, 1, DAY_IN_SECONDS * 2);
+                $sent++;
+            }
+        }
+        return $sent;
+    }
+
+    /**
+     * Probeer wp-cron te triggeren zonder blokkeren (loopback).
+     */
+    private function trigger_wp_cron_async(): void
+    {
+        if (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON) {
+            return;
+        }
+        $url = site_url('wp-cron.php');
+        wp_remote_post($url, [
+            'timeout' => 0.01,
+            'blocking' => false,
+            'sslverify' => false,
+            'body' => [
+                'doing_wp_cron' => microtime(true),
+            ],
+        ]);
     }
 
     /**
