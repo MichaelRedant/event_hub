@@ -5,6 +5,13 @@ defined('ABSPATH') || exit;
 
 class Locale
 {
+    /**
+     * Cache per-request language detection.
+     *
+     * @var bool|null
+     */
+    private static ?bool $is_french = null;
+
     public function init(): void
     {
         add_filter('gettext', [$this, 'translate'], 10, 3);
@@ -19,6 +26,8 @@ class Locale
         if ($domain !== 'event-hub') {
             return $translated;
         }
+
+        $is_fr = $this->is_french_request();
 
         static $map = [
             // Admin labels
@@ -123,10 +132,57 @@ class Locale
             'This event is full' => 'Dit event is volzet',
         ];
 
+        static $map_fr = [
+            // Frontend + modal labels
+            'Deel dit event' => 'Partager cet événement',
+            'Inschrijven' => 'S’inscrire',
+            'Voornaam' => 'Prénom',
+            'Familienaam' => 'Nom de famille',
+            'E-mail' => 'E-mail',
+            'Telefoon' => 'Téléphone',
+            'Bedrijf' => 'Entreprise',
+            'BTW-nummer' => 'TVA',
+            'Rol' => 'Rôle',
+            'Aantal personen' => 'Nombre de personnes',
+            'Maak een keuze' => 'Choisissez une option',
+            'Ik wil relevante communicatie ontvangen.' => 'Je souhaite recevoir des communications pertinentes.',
+            'Zet me op de wachtlijst indien volzet.' => 'Mettez-moi sur la liste d’attente si c’est complet.',
+            'Op wachtlijst plaatsen' => 'Placer sur liste d’attente',
+            'Bedankt! We hebben je inschrijving ontvangen.' => 'Merci ! Nous avons bien reçu votre inscription.',
+            'Bedankt! Je staat nu op de wachtlijst.' => 'Merci ! Vous êtes maintenant sur la liste d’attente.',
+            'Inschrijvingen zijn gesloten.' => 'Les inscriptions sont clôturées.',
+            'Inschrijven kan vanaf %s.' => 'Les inscriptions ouvrent le %s.',
+            'Dit event is volzet. Vul je gegevens in om op de wachtlijst te komen.' => 'Cet événement est complet. Laissez vos coordonnées pour la liste d’attente.',
+            'Inschrijvingen voor dit event verlopen extern.' => 'Les inscriptions pour cet événement se font ailleurs.',
+            'Maak een keuze' => 'Choisissez une option',
+            'Prijs' => 'Prix',
+            'Beschikbaarheid' => 'Disponibilité',
+            'Geen wachtlijst' => 'Pas de liste d’attente',
+            'Kopieer link' => 'Copier le lien',
+            'Deel dit event:' => 'Partager cet événement :',
+            // Buttons / placeholders
+            'Meer informatie' => 'Plus d’informations',
+        ];
+
+        if ($is_fr && isset($map_fr[$text])) {
+            return $map_fr[$text];
+        }
         if (isset($map[$text])) {
             return $map[$text];
         }
         return $translated;
     }
-}
 
+    /**
+     * Detecteer of de huidige request Frans is (simplistisch op /fr/ in de slug).
+     */
+    private function is_french_request(): bool
+    {
+        if (self::$is_french !== null) {
+            return self::$is_french;
+        }
+        $uri = $_SERVER['REQUEST_URI'] ?? '';
+        self::$is_french = (strpos($uri, '/fr/') !== false || substr($uri, -3) === '/fr');
+        return self::$is_french;
+    }
+}

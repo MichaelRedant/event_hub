@@ -569,6 +569,17 @@ class Registrations
             'callback' => [$this, 'handle_rest_register'],
             'permission_callback' => '__return_true',
         ]);
+        register_rest_route('event-hub/v1', '/session', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [$this, 'handle_rest_session'],
+            'permission_callback' => '__return_true',
+            'args' => [
+                'session_id' => [
+                    'required' => true,
+                    'type' => 'integer',
+                ],
+            ],
+        ]);
         register_rest_route('event-hub/v1', '/registrations', [
             'methods' => WP_REST_Server::READABLE,
             'callback' => [$this, 'handle_rest_registrations'],
@@ -685,6 +696,122 @@ class Registrations
                 'button_disabled' => in_array($status, ['cancelled', 'closed'], true),
             ],
         ]);
+    }
+
+    public function handle_rest_session(WP_REST_Request $request): WP_REST_Response
+    {
+        $session_id = (int) $request->get_param('session_id');
+        if ($session_id <= 0) {
+            return new WP_REST_Response([
+                'success' => false,
+                'message' => __('Ongeldig event.', 'event-hub'),
+            ], 400);
+        }
+
+        $post = get_post($session_id);
+        if (!$post || $post->post_type !== Settings::get_cpt_slug()) {
+            return new WP_REST_Response([
+                'success' => false,
+                'message' => __('Event niet gevonden.', 'event-hub'),
+            ], 404);
+        }
+
+        $state = $this->get_capacity_state($session_id);
+        $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';
+        $badge = $this->get_status_badge_data($status, $state['is_full']);
+        $color = sanitize_hex_color((string) get_post_meta($session_id, '_eh_color', true)) ?: '#2271b1';
+        $hero_image = get_the_post_thumbnail_url($session_id, 'full') ?: '';
+        $date_start = get_post_meta($session_id, '_eh_date_start', true);
+        $date_end = get_post_meta($session_id, '_eh_date_end', true);
+        $location = get_post_meta($session_id, '_eh_location', true);
+        $is_online = (bool) get_post_meta($session_id, '_eh_is_online', true);
+        $online_link = get_post_meta($session_id, '_eh_online_link', true);
+        $address = get_post_meta($session_id, '_eh_address', true);
+        $organizer = get_post_meta($session_id, '_eh_organizer', true);
+        $staff = get_post_meta($session_id, '_eh_staff', true);
+        $price = get_post_meta($session_id, '_eh_price', true);
+        $ticket_note = get_post_meta($session_id, '_eh_ticket_note', true);
+        $booking_open = get_post_meta($session_id, '_eh_booking_open', true);
+        $booking_close = get_post_meta($session_id, '_eh_booking_close', true);
+        $enable_module_meta = get_post_meta($session_id, '_eh_enable_module', true);
+        $module_enabled = ($enable_module_meta === '') ? true : (bool) $enable_module_meta;
+        $hide_fields = array_map('sanitize_key', (array) get_post_meta($session_id, '_eh_form_hide_fields', true));
+        $extra_fields = $this->get_extra_fields($session_id);
+
+        $date_label = $date_start ? date_i18n(get_option('date_format'), strtotime($date_start)) : '';
+        $time_start = $date_start ? date_i18n(get_option('time_format'), strtotime($date_start)) : '';
+        $time_end = $date_end ? date_i18n(get_option('time_format'), strtotime($date_end)) : '';
+        $time_range = $time_start && $time_end ? $time_start . ' - ' . $time_end : $time_start;
+        $location_label = $is_online ? __('Online', 'event-hub') : ($location ?: '');
+
+        $availability_label = $state['capacity'] > 0
+            ? sprintf(_n('%d plaats beschikbaar', '%d plaatsen beschikbaar', $state['available'], 'event-hub'), $state['available'])
+            : __('Onbeperkt', 'event-hub');
+        $waitlist_label = $state['waitlist'] > 0
+            ? sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $state['waitlist'], 'event-hub'), $state['waitlist'])
+            : __('Geen wachtlijst', 'event-hub');
+
+        $can_register = $module_enabled;
+        $register_notice = '';
+        $now = current_time('timestamp');
+        $open_ts = $booking_open ? strtotime($booking_open) : null;
+        $close_ts = $booking_close ? strtotime($booking_close) : null;
+        $event_start_ts = $date_start ? strtotime($date_start) : null;
+
+        if ($can_register) {
+            if (in_array($status, ['cancelled', 'closed'], true)) {
+                $can_register = false;
+                $register_notice = __('Inschrijvingen zijn gesloten.', 'event-hub');
+            } elseif ($open_ts && $now < $open_ts) {
+                $can_register = false;
+                $register_notice = sprintf(__('Inschrijven kan vanaf %s.', 'event-hub'), date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $open_ts));
+            } elseif (($close_ts && $now > $close_ts) || (!$close_ts && $event_start_ts && $now >= strtotime(date('Y-m-d 00:00:00', $event_start_ts)))) {
+                $can_register = false;
+                $register_notice = __('Inschrijvingen zijn gesloten.', 'event-hub');
+            }
+        }
+
+        $captcha = [
+            'enabled' => \EventHub\Security::captcha_enabled(),
+            'provider' => \EventHub\Security::provider(),
+            'site_key' => \EventHub\Security::site_key(),
+        ];
+
+        return new WP_REST_Response([
+            'success' => true,
+            'session' => [
+                'id' => $session_id,
+                'title' => get_the_title($session_id),
+                'excerpt' => get_the_excerpt($session_id),
+                'content' => apply_filters('the_content', $post->post_content),
+                'permalink' => get_permalink($session_id),
+                'badge' => $badge,
+                'status' => $status,
+                'color' => $color,
+                'hero_image' => $hero_image,
+                'date_label' => $date_label,
+                'time_range' => $time_range,
+                'location_label' => $location_label,
+                'address' => $address ?: '',
+                'online_link' => $online_link ?: '',
+                'organizer' => $organizer ?: '',
+                'staff' => $staff ?: '',
+                'price' => $price,
+                'ticket_note' => $ticket_note ?: '',
+                'availability_label' => $availability_label,
+                'waitlist_label' => $waitlist_label,
+                'state' => $state,
+                'can_register' => $can_register,
+                'module_enabled' => $module_enabled,
+                'register_notice' => $register_notice,
+                'waitlist_mode' => $can_register && $state['is_full'],
+                'hide_fields' => $hide_fields,
+                'extra_fields' => $extra_fields,
+                'booking_open' => $booking_open ?: '',
+                'booking_close' => $booking_close ?: '',
+                'captcha' => $captcha,
+            ],
+        ]);
     }
 
     private function get_status_badge_data(string $status, bool $is_full): array

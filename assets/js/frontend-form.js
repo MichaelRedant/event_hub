@@ -3,6 +3,7 @@
 
     const config = window.EventHubForms || {};
     const endpoint = config.endpoint || '';
+    const sessionEndpoint = config.sessionEndpoint || (endpoint ? endpoint.replace(/\/register$/, '/session') : '');
 
     if (!endpoint) {
         return;
@@ -134,6 +135,7 @@
 
     const scan = () => {
         document.querySelectorAll('[data-event-hub-form]').forEach(bindForm);
+        document.querySelectorAll('[data-eventhub-open]').forEach(bindCard);
     };
 
     const handleRegistrationSuccess = (session) => {
@@ -190,6 +192,363 @@
                 }
             }
         });
+    };
+
+    const bindCard = (button) => {
+        if (!button || button.dataset.ehBound === '1') {
+            return;
+        }
+        button.dataset.ehBound = '1';
+        button.addEventListener('click', (event) => {
+            const sessionId = resolveSessionId(button);
+            if (!sessionId) {
+                return;
+            }
+            event.preventDefault();
+            openSessionModal(sessionId);
+        });
+    };
+
+    const resolveSessionId = (button) => {
+        const attr = button.dataset.eventhubOpen || '';
+        let id = parseInt(attr || '0', 10);
+        if (!id) {
+            const card = button.closest('[data-eventhub-session]');
+            if (card) {
+                id = parseInt(card.getAttribute('data-eventhub-session') || '0', 10);
+            }
+        }
+        return id;
+    };
+
+    const openSessionModal = (sessionId) => {
+        if (!sessionEndpoint) {
+            return;
+        }
+        showModalLoading();
+        fetch(`${sessionEndpoint}?session_id=${encodeURIComponent(sessionId)}`, {
+            method: 'GET',
+            credentials: 'same-origin',
+            headers: {
+                'Accept': 'application/json',
+            },
+        }).then((resp) => resp.json())
+            .then((data) => {
+                if (!data || !data.success || !data.session) {
+                    showModalError(getMessage('error', 'Kon event niet laden.'));
+                    return;
+                }
+                renderSessionModal(data.session);
+            })
+            .catch(() => showModalError(getMessage('error', 'Kon event niet laden.')));
+    };
+
+    const modalRoot = () => {
+        let root = document.querySelector('.eh-modal');
+        if (!root) {
+            root = document.createElement('div');
+            root.className = 'eh-modal';
+            root.innerHTML = '<div class="eh-modal__overlay"></div><div class="eh-modal__dialog"><button class="eh-modal__close" aria-label="Sluiten">&times;</button><div class="eh-modal__content"></div></div>';
+            document.body.appendChild(root);
+            root.querySelector('.eh-modal__overlay').addEventListener('click', closeModal);
+            root.querySelector('.eh-modal__close').addEventListener('click', closeModal);
+            document.addEventListener('keyup', (evt) => {
+                if (evt.key === 'Escape') {
+                    closeModal();
+                }
+            });
+        }
+        return root;
+    };
+
+    const closeModal = () => {
+        const root = document.querySelector('.eh-modal');
+        if (root) {
+            root.classList.remove('is-visible');
+            root.classList.remove('is-error');
+            const content = root.querySelector('.eh-modal__content');
+            if (content) {
+                content.innerHTML = '';
+            }
+        }
+    };
+
+    const showModalLoading = () => {
+        const root = modalRoot();
+        const content = root.querySelector('.eh-modal__content');
+        root.classList.add('is-visible');
+        if (content) {
+            content.innerHTML = '<div class="eh-modal__loading">' + getMessage('loading', 'Bezig met laden...') + '</div>';
+        }
+    };
+
+    const showModalError = (message) => {
+        const root = modalRoot();
+        const content = root.querySelector('.eh-modal__content');
+        root.classList.add('is-visible');
+        root.classList.add('is-error');
+        if (content) {
+            content.innerHTML = '<div class="eh-modal__error">' + message + '</div>';
+        }
+    };
+
+    const renderSessionModal = (session) => {
+        const root = modalRoot();
+        const content = root.querySelector('.eh-modal__content');
+        if (!content) {
+            return;
+        }
+        const badge = session.badge ? `<span class="eh-badge ${session.badge.class || ''}">${session.badge.label || ''}</span>` : '';
+        const meta = [];
+        if (session.date_label) {
+            meta.push(`<div class="eh-meta">${session.date_label}${session.time_range ? ' | ' + session.time_range : ''}</div>`);
+        }
+        if (session.location_label) {
+            meta.push(`<div class="eh-meta">${session.location_label}</div>`);
+        }
+        if (session.address) {
+            meta.push(`<div class="eh-meta">${session.address}</div>`);
+        }
+        if (session.organizer) {
+            meta.push(`<div class="eh-meta"><strong>${session.organizer}</strong></div>`);
+        }
+        if (session.staff) {
+            meta.push(`<div class="eh-meta">${session.staff}</div>`);
+        }
+        if (session.price !== undefined && session.price !== null && session.price !== '') {
+            meta.push(`<div class="eh-meta"><strong>${getMessage('price', 'Prijs')}:</strong> ${session.price}</div>`);
+        }
+        if (session.ticket_note) {
+            meta.push(`<div class="eh-meta">${session.ticket_note}</div>`);
+        }
+
+        const availability = `<div class="eh-meta eh-availability">${session.availability_label || ''}</div>` +
+            (session.waitlist_label ? `<div class="eh-meta eh-waitlist">${session.waitlist_label}</div>` : '');
+
+        const share = buildShareBar(session);
+
+        const canRegister = session.can_register && session.module_enabled;
+        const waitlistMode = !!session.waitlist_mode;
+        const registerNotice = session.register_notice || '';
+
+        let formHtml = '';
+        if (!session.module_enabled) {
+            formHtml = `<div class="eh-alert notice">${getMessage('external', 'Inschrijvingen verlopen extern voor dit event.')}</div>`;
+        } else if (!canRegister && registerNotice) {
+            formHtml = `<div class="eh-alert notice">${registerNotice}</div>`;
+        } else {
+            formHtml = buildForm(session, waitlistMode);
+        }
+
+        content.innerHTML = `
+            <div class="eh-modal__header" style="--eh-accent:${session.color || '#2271b1'};${session.hero_image ? 'background-image:url(' + session.hero_image + ');' : ''}">
+                <div class="eh-modal__hero-overlay"></div>
+                <div class="eh-modal__header-content">
+                    ${badge}
+                    <h2>${session.title || ''}</h2>
+                    ${meta.join('')}
+                    ${availability}
+                </div>
+            </div>
+            <div class="eh-modal__body">
+                ${share}
+                ${session.content || ''}
+                ${formHtml}
+            </div>
+        `;
+
+        root.classList.remove('is-error');
+        root.classList.add('is-visible');
+
+        content.querySelectorAll('[data-event-hub-form]').forEach(bindForm);
+        if (session.captcha && session.captcha.enabled) {
+            ensureCaptchaToken(session.captcha);
+        }
+    };
+
+    const buildForm = (session, waitlistMode) => {
+        const hide = Array.isArray(session.hide_fields) ? session.hide_fields : [];
+        const fields = [];
+        fields.push(fieldInput('first_name', getMessage('first_name', 'Voornaam'), true));
+        fields.push(fieldInput('last_name', getMessage('last_name', 'Familienaam'), true));
+        fields.push(fieldInput('email', getMessage('email', 'E-mail'), true, 'email'));
+        if (!hide.includes('phone')) {
+            fields.push(fieldInput('phone', getMessage('phone', 'Telefoon'), false));
+        }
+        if (!hide.includes('company')) {
+            fields.push(fieldInput('company', getMessage('company', 'Bedrijf'), false));
+        }
+        if (!hide.includes('vat')) {
+            fields.push(fieldInput('vat', getMessage('vat', 'BTW-nummer'), false));
+        }
+        if (!hide.includes('role')) {
+            fields.push(fieldInput('role', getMessage('role', 'Rol'), false));
+        }
+        if (!hide.includes('people_count')) {
+            fields.push(numberInput('people_count', getMessage('people_count', 'Aantal personen'), session.state && session.state.capacity ? session.state.capacity : 99));
+        }
+        if (Array.isArray(session.extra_fields) && session.extra_fields.length) {
+            session.extra_fields.forEach((field) => {
+                const slug = field.slug;
+                const label = field.label || slug;
+                const required = !!field.required;
+                if (!slug || !label) {
+                    return;
+                }
+                if (field.type === 'textarea') {
+                    fields.push(textareaInput(`extra[${slug}]`, label, required));
+                } else if (field.type === 'select') {
+                    fields.push(selectInput(`extra[${slug}]`, label, field.options || [], required));
+                } else {
+                    fields.push(fieldInput(`extra[${slug}]`, label, required));
+                }
+            });
+        }
+        if (!hide.includes('marketing')) {
+            fields.push(checkboxInput('consent_marketing', getMessage('marketing_optin', 'Ik wil relevante communicatie ontvangen.')));
+        }
+        if (waitlistMode) {
+            fields.push(checkboxInput('waitlist_opt_in', getMessage('waitlist_opt_in', 'Zet me op de wachtlijst indien volzet.'), true));
+        }
+
+        const submitLabel = waitlistMode ? getMessage('waitlist_submit', 'Op wachtlijst plaatsen') : getMessage('submit', 'Inschrijven');
+
+        return `
+            <div class="eh-session-form" data-event-hub-form="1">
+                <div class="eh-form-feedback"></div>
+                <form class="eh-form" data-ehevent="${session.id || 0}">
+                    <input type="hidden" name="session_id" value="${session.id || 0}" />
+                    ${waitlistMode ? '<input type="hidden" name="waitlist_opt_in" value="1" />' : ''}
+                    <div class="eh-grid">
+                        ${fields.join('')}
+                    </div>
+                    <input type="hidden" name="eh_captcha_token" id="eh_captcha_token" value="">
+                    <button type="submit" class="eh-btn">${submitLabel}</button>
+                </form>
+            </div>
+        `;
+    };
+
+    const fieldInput = (name, label, required = false, type = 'text') => {
+        const req = required ? ' required' : '';
+        return `<div class="field"><label>${label}${required ? ' *' : ''}</label><input type="${type}" name="${name}"${req}></div>`;
+    };
+
+    const numberInput = (name, label, max) => {
+        const safeMax = Math.max(1, parseInt(max || '1', 10));
+        return `<div class="field"><label>${label}</label><input type="number" name="${name}" min="1" max="${safeMax}" value="1"></div>`;
+    };
+
+    const textareaInput = (name, label, required = false) => {
+        const req = required ? ' required' : '';
+        return `<div class="field"><label>${label}${required ? ' *' : ''}</label><textarea name="${name}" rows="3"${req}></textarea></div>`;
+    };
+
+    const selectInput = (name, label, options, required = false) => {
+        const req = required ? ' required' : '';
+        const opts = (options || []).map((opt) => `<option value="${opt}">${opt}</option>`).join('');
+        return `<div class="field"><label>${label}${required ? ' *' : ''}</label><select name="${name}"${req}><option value="">${getMessage('choose', 'Maak een keuze')}</option>${opts}</select></div>`;
+    };
+
+    const checkboxInput = (name, label, checked = false) => {
+        return `<div class="field full checkbox"><label><input type="checkbox" name="${name}" value="1"${checked ? ' checked' : ''}> ${label}</label></div>`;
+    };
+
+    const buildShareBar = (session) => {
+        const url = session.permalink || window.location.href;
+        const title = encodeURIComponent(session.title || '');
+        const shareUrl = encodeURIComponent(url);
+        const mailSubject = encodeURIComponent((config.messages && config.messages.shareSubject) || 'Interessant event');
+        const mailBody = encodeURIComponent(`${session.title || ''}\n${url}`);
+        return `
+            <div class="eh-share">
+                <span class="eh-share__label">${getMessage('share', 'Deel dit event')}:</span>
+                <div class="eh-share__buttons">
+                    <a href="https://www.linkedin.com/sharing/share-offsite/?url=${shareUrl}" class="eh-share__btn eh-share__btn--in" target="_blank" rel="noopener" aria-label="Deel op LinkedIn">in</a>
+                    <a href="https://www.facebook.com/sharer/sharer.php?u=${shareUrl}" class="eh-share__btn eh-share__btn--fb" target="_blank" rel="noopener" aria-label="Deel op Facebook">f</a>
+                    <a href="mailto:?subject=${mailSubject}&body=${mailBody}" class="eh-share__btn eh-share__btn--mail" aria-label="Deel via e-mail">@</a>
+                    <button class="eh-share__btn eh-share__btn--copy" type="button" data-ehaction="copy-link" data-link="${url}" aria-label="Kopieer link">⧉</button>
+                </div>
+            </div>
+        `;
+    };
+
+    document.addEventListener('click', (event) => {
+        const target = event.target;
+        if (target && target.matches('.eh-share__btn--copy')) {
+            event.preventDefault();
+            const link = target.getAttribute('data-link') || window.location.href;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(link).then(() => {
+                    target.classList.add('is-copied');
+                    setTimeout(() => target.classList.remove('is-copied'), 1200);
+                }).catch(() => {
+                    fallbackCopy(link, target);
+                });
+            } else {
+                fallbackCopy(link, target);
+            }
+        }
+    });
+
+    const fallbackCopy = (text, target) => {
+        const input = document.createElement('input');
+        input.value = text;
+        document.body.appendChild(input);
+        input.select();
+        try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+        document.body.removeChild(input);
+        if (target) {
+            target.classList.add('is-copied');
+            setTimeout(() => target.classList.remove('is-copied'), 1200);
+        }
+    };
+
+    const ensureCaptchaToken = (captcha) => {
+        if (!captcha || !captcha.enabled || !captcha.site_key) {
+            return;
+        }
+        if (captcha.provider === 'hcaptcha') {
+            loadCaptchaScript('hcaptcha', `https://js.hcaptcha.com/1/api.js?render=${captcha.site_key}`, () => {
+                if (window.hcaptcha) {
+                    window.hcaptcha.ready(() => {
+                        window.hcaptcha.execute(captcha.site_key, { action: 'eventhub_register' }).then((token) => {
+                            const target = document.getElementById('eh_captcha_token');
+                            if (target) {
+                                target.value = token;
+                            }
+                        });
+                    });
+                }
+            });
+        } else {
+            loadCaptchaScript('grecaptcha', `https://www.google.com/recaptcha/api.js?render=${captcha.site_key}`, () => {
+                if (window.grecaptcha) {
+                    window.grecaptcha.ready(() => {
+                        window.grecaptcha.execute(captcha.site_key, { action: 'eventhub_register' }).then((token) => {
+                            const target = document.getElementById('eh_captcha_token');
+                            if (target) {
+                                target.value = token;
+                            }
+                        });
+                    });
+                }
+            });
+        }
+    };
+
+    const loadCaptchaScript = (key, src, callback) => {
+        if (document.querySelector(`script[data-eh-captcha="${key}"]`)) {
+            callback();
+            return;
+        }
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.defer = true;
+        script.dataset.ehCaptcha = key;
+        script.onload = callback;
+        document.head.appendChild(script);
     };
 
     if (document.readyState === 'loading') {

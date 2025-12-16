@@ -78,6 +78,15 @@ class Widget_Session_List extends Widget_Base
             'default' => 'yes',
         ]);
 
+        $this->add_control('respect_show_on_site', [
+            'label' => __('Filter op "toon op site"', 'event-hub'),
+            'type' => Controls_Manager::SWITCHER,
+            'label_on' => __('Ja', 'event-hub'),
+            'label_off' => __('Nee', 'event-hub'),
+            'return_value' => 'yes',
+            'default' => 'yes',
+        ]);
+
         $this->add_control('layout', [
             'label' => __('Lay-out', 'event-hub'),
             'type' => Controls_Manager::SELECT,
@@ -571,6 +580,9 @@ class Widget_Session_List extends Widget_Base
     {
         $settings = $this->get_settings_for_display();
 
+        wp_enqueue_style('event-hub-frontend-style');
+        wp_enqueue_script('event-hub-frontend');
+
         $args = [
             'post_type' => Settings::get_cpt_slug(),
             'posts_per_page' => !empty($settings['posts_per_page']) ? (int) $settings['posts_per_page'] : 6,
@@ -579,13 +591,14 @@ class Widget_Session_List extends Widget_Base
             'meta_key' => '_eh_date_start',
         ];
 
-        $meta_query = [
-            [
+        $meta_query = [];
+        if (!empty($settings['respect_show_on_site']) && $settings['respect_show_on_site'] === 'yes') {
+            $meta_query[] = [
                 'key' => '_eh_show_on_site',
                 'value' => 1,
                 'compare' => '=',
-            ],
-        ];
+            ];
+        }
 
         if (!empty($settings['only_future']) && $settings['only_future'] === 'yes') {
             $meta_query[] = [
@@ -612,6 +625,9 @@ class Widget_Session_List extends Widget_Base
             $statuses = array_map('sanitize_text_field', (array) $settings['included_statuses']);
             $statuses = array_filter($statuses);
             if ($statuses) {
+                if (empty($args['meta_query'])) {
+                    $args['meta_query'] = [];
+                }
                 $args['meta_query'][] = [
                     'key' => '_eh_status',
                     'value' => $statuses,
@@ -711,7 +727,7 @@ class Widget_Session_List extends Widget_Base
         }
         if (!empty($settings['show_button']) && $settings['show_button'] === 'yes') {
             $button_label = !empty($settings['button_text']) ? $settings['button_text'] : __('Meer informatie', 'event-hub');
-            echo '<a class="eh-btn" data-eventhub-button style="background:' . esc_attr($color) . ';" href="' . esc_url($permalink) . '">' . esc_html($button_label) . '</a>';
+            echo '<a class="eh-btn" data-eventhub-button data-eventhub-open="' . esc_attr((string) $post_id) . '" style="background:' . esc_attr($color) . ';" href="' . esc_url($permalink) . '">' . esc_html($button_label) . '</a>';
         }
         echo '</article>';
     }

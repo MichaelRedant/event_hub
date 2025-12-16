@@ -682,9 +682,6 @@ class Widget_Session_Detail extends Widget_Base
         if ($colleague_names) {
             $meta_output[] = esc_html(sprintf(__('Aanwezig: %s', 'event-hub'), implode(', ', $colleague_names)));
         }
-        if ($colleague_names) {
-            $meta_output[] = esc_html(sprintf(__('Aanwezig: %s', 'event-hub'), implode(', ', $colleague_names)));
-        }
         $pricing_lines = [];
         if ($price !== '') {
             $pricing_lines[] = sprintf(__('Prijs: %s', 'event-hub'), $price);
@@ -800,51 +797,9 @@ class Widget_Session_Detail extends Widget_Base
             echo '<div class="eh-alert notice">' . esc_html__('Dit event is volzet. Vul je gegevens in om op de wachtlijst te komen.', 'event-hub') . '</div>';
         }
 
-        $message = '';
-        $error = '';
-        if (
-            isset($_POST['eh_register_nonce'])
-            && wp_verify_nonce(sanitize_text_field((string) $_POST['eh_register_nonce']), 'eh_register_' . $session_id)
-        ) {
-            $data = [
-                'session_id' => $session_id,
-                'first_name' => sanitize_text_field($_POST['first_name'] ?? ''),
-                'last_name' => sanitize_text_field($_POST['last_name'] ?? ''),
-                'email' => sanitize_text_field($_POST['email'] ?? ''),
-                'phone' => sanitize_text_field($_POST['phone'] ?? ''),
-                'company' => sanitize_text_field($_POST['company'] ?? ''),
-                'vat' => sanitize_text_field($_POST['vat'] ?? ''),
-                'role' => sanitize_text_field($_POST['role'] ?? ''),
-                'people_count' => isset($_POST['people_count']) ? (int) $_POST['people_count'] : 1,
-                'consent_marketing' => isset($_POST['consent_marketing']) ? 1 : 0,
-                'waitlist_opt_in' => $waitlist_mode ? 1 : 0,
-                'extra' => isset($_POST['extra']) && is_array($_POST['extra']) ? $_POST['extra'] : [],
-            ];
-            $result = $this->registrations->create_registration($data);
-            if (is_wp_error($result)) {
-                $error = $result->get_error_message();
-            } else {
-                $created = $this->registrations->get_registration($result);
-                if ($created && ($created['status'] ?? '') === 'waitlist') {
-                    $message = __('Bedankt! Je staat nu op de wachtlijst.', 'event-hub');
-                } else {
-                    $message = $success_message_text;
-                }
-            }
-        }
-
-        if ($message) {
-            echo '<div class="eh-alert success">' . wp_kses_post($message) . '</div>';
-            echo '</div>';
-            return;
-        }
-        if ($error) {
-            echo '<div class="eh-alert error">' . esc_html($error) . '</div>';
-        }
-
+        // REST-first: form submit wordt door frontend-form.js afgehandeld.
         echo '<form method="post" class="eh-form" data-ehevent="' . esc_attr((string) $session_id) . '">';
         echo '<div class="field" style="display:none !important;"><label>' . esc_html__('Laat leeg', 'event-hub') . '</label><input type="text" name="_eh_hp" value=""></div>';
-        wp_nonce_field('eh_register_' . $session_id, 'eh_register_nonce');
         echo '<input type="hidden" name="session_id" value="' . esc_attr((string) $session_id) . '" />';
         if ($waitlist_mode) {
             echo '<input type="hidden" name="waitlist_opt_in" value="1" />';
@@ -895,12 +850,12 @@ class Widget_Session_Detail extends Widget_Base
             echo '</div>';
         }
         if ($show_marketing && !in_array('marketing', $hide_fields, true)) {
-            $checked = isset($_POST['consent_marketing']) ? ' checked' : '';
-            echo '<div class="field full checkbox"><label><input type="checkbox" name="consent_marketing" value="1"' . $checked . ' /> ' . esc_html__('Ik wil marketingupdates ontvangen', 'event-hub') . '</label></div>';
+            echo '<div class="field full checkbox"><label><input type="checkbox" name="consent_marketing" value="1" /> ' . esc_html__('Ik wil marketingupdates ontvangen', 'event-hub') . '</label></div>';
         }
         echo '</div>';
 
-        $this->render_captcha_fields();
+        // Hidden captcha token (gevuld door JS).
+        echo '<input type="hidden" name="eh_captcha_token" id="eh_captcha_token" value="">';
 
         $submit_label = $waitlist_mode ? __('Op wachtlijst plaatsen', 'event-hub') : $button_label;
         echo '<button type="submit" class="eh-btn">' . esc_html($submit_label) . '</button>';
