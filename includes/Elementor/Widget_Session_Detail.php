@@ -84,6 +84,19 @@ class Widget_Session_Detail extends Widget_Base
             'description' => __('Wordt gebruikt wanneer Elementor geen huidig event kan detecteren (bv. op een gewone pagina).', 'event-hub'),
         ]);
 
+        $this->add_control('external_cpt_slug', [
+            'label' => __('Externe CPT-slug (override)', 'event-hub'),
+            'type' => Controls_Manager::TEXT,
+            'placeholder' => 'bv. evenementen',
+            'description' => __('Gebruik deze slug om de gekoppelde Event Hub sessie te zoeken, i.p.v. het huidige post type.', 'event-hub'),
+        ]);
+
+        $this->add_control('external_event_id', [
+            'label' => __('Externe event ID (override)', 'event-hub'),
+            'type' => Controls_Manager::NUMBER,
+            'description' => __('Gebruik dit ID om de koppeling te zoeken als detectie niet werkt.', 'event-hub'),
+        ]);
+
         $this->add_control('show_details', [
             'label' => __('Toon eventdetails', 'event-hub'),
             'type' => Controls_Manager::SWITCHER,
@@ -574,12 +587,25 @@ class Widget_Session_Detail extends Widget_Base
         $use_detect = !empty($settings['detect_current']) && $settings['detect_current'] === 'yes';
 
         if ($use_detect) {
-            $candidate = get_queried_object_id();
+            $candidate_override = !empty($settings['external_event_id']) ? (int) $settings['external_event_id'] : 0;
+            $candidate = $candidate_override ?: get_queried_object_id();
             if (!$candidate) {
                 $candidate = get_the_ID();
             }
-            if ($candidate && get_post_type($candidate) === $cpt) {
-                return (int) $candidate;
+            if ($candidate) {
+                $candidate_type = get_post_type($candidate);
+                if ($candidate_type === $cpt) {
+                    return (int) $candidate;
+                }
+                $external_override = !empty($settings['external_cpt_slug']) ? sanitize_key((string) $settings['external_cpt_slug']) : '';
+                $external_type = $external_override !== '' ? $external_override : (string) $candidate_type;
+                $linked = $this->find_linked_session_id((int) $candidate, $external_type);
+                if ($linked) {
+                    if ($this->is_editor_mode()) {
+                        $this->preview_message = __('Preview toont gekoppeld Event Hub event.', 'event-hub');
+                    }
+                    return $linked;
+                }
             }
         }
 
@@ -601,6 +627,118 @@ class Widget_Session_Detail extends Widget_Base
             }
         }
 
+        return 0;
+    }
+
+    protected function find_linked_session_id(int $external_id, string $external_type): int
+    {
+        if (!$external_id || $external_type === '') {
+            return 0;
+        }
+        $linked_session_id = (int) get_post_meta($external_id, '_eh_linked_session_id', true);
+        if ($linked_session_id) {
+            $type = get_post_type($linked_session_id);
+            if (!$type) {
+                global $wpdb;
+                $type = $wpdb->get_var($wpdb->prepare("SELECT post_type FROM {$wpdb->posts} WHERE ID = %d", $linked_session_id));
+            }
+            if ($type === Settings::get_cpt_slug()) {
+                return $linked_session_id;
+            }
+        }
+        $args = [
+            'post_type' => Settings::get_cpt_slug(),
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'meta_query' => [
+                [
+                    'key' => '_eh_linked_event_cpt',
+                    'value' => $external_type,
+                ],
+                [
+                    'key' => '_eh_linked_event_id',
+                    'value' => (string) $external_id,
+                    'compare' => '=',
+                ],
+            ],
+            'no_found_rows' => true,
+            'ignore_sticky_posts' => true,
+        ];
+        $query = new \WP_Query($args);
+        if (!empty($query->posts)) {
+            return (int) $query->posts[0]->ID;
+        }
+        $args_id_only = $args;
+        $args_id_only['meta_query'] = [
+            [
+                'key' => '_eh_linked_event_id',
+                'value' => (string) $external_id,
+                'compare' => '=',
+            ],
+        ];
+        $query = new \WP_Query($args_id_only);
+        if (!empty($query->posts)) {
+            return (int) $query->posts[0]->ID;
+        }
+        $args['suppress_filters'] = true;
+        $query = new \WP_Query($args);
+        if (!empty($query->posts)) {
+            return (int) $query->posts[0]->ID;
+        }
+        $args_id_only['suppress_filters'] = true;
+        $query = new \WP_Query($args_id_only);
+        if (!empty($query->posts)) {
+            return (int) $query->posts[0]->ID;
+        }
+        global $wpdb;
+        $sql = "
+            SELECT p.ID
+            FROM {$wpdb->posts} p
+            INNER JOIN {$wpdb->postmeta} m1 ON p.ID = m1.post_id AND m1.meta_key = %s AND m1.meta_value = %s
+            LEFT JOIN {$wpdb->postmeta} m2 ON p.ID = m2.post_id AND m2.meta_key = %s
+            WHERE p.post_type = %s
+              AND p.post_status IN ('publish','future','draft','pending','private')
+              AND (m2.meta_value = %s OR m2.meta_value = '' OR m2.meta_value IS NULL)
+            LIMIT 1
+        ";
+        $row = $wpdb->get_var($wpdb->prepare(
+            $sql,
+            '_eh_linked_event_id',
+            (string) $external_id,
+            '_eh_linked_event_cpt',
+            Settings::get_cpt_slug(),
+            $external_type
+        ));
+        if ($row) {
+            return (int) $row;
+        }
+        $row = $wpdb->get_var($wpdb->prepare(
+            "SELECT p.ID FROM {$wpdb->posts} p INNER JOIN {$wpdb->postmeta} m ON p.ID = m.post_id AND m.meta_key = %s AND m.meta_value = %s WHERE p.post_type = %s AND p.post_status IN ('publish','future','draft','pending','private') LIMIT 1",
+            '_eh_linked_event_id',
+            (string) $external_id,
+            Settings::get_cpt_slug()
+        ));
+        if ($row) {
+            return (int) $row;
+        }
+        $slug = '';
+        $external_post = get_post($external_id);
+        if ($external_post && !empty($external_post->post_name)) {
+            $slug = (string) $external_post->post_name;
+        }
+        if ($slug === '') {
+            $slug = (string) $wpdb->get_var($wpdb->prepare("SELECT post_name FROM {$wpdb->posts} WHERE ID = %d", $external_id));
+        }
+        if ($slug !== '') {
+            $row = $wpdb->get_var($wpdb->prepare(
+                "SELECT ID FROM {$wpdb->posts} WHERE post_type = %s AND post_name = %s LIMIT 1",
+                Settings::get_cpt_slug(),
+                $slug
+            ));
+            if ($row) {
+                return (int) $row;
+            }
+        }
         return 0;
     }
 

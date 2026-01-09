@@ -36,7 +36,34 @@ class Logger
     public function all(): array
     {
         $logs = get_option(self::OPTION, []);
-        return is_array($logs) ? array_reverse($logs) : [];
+        return is_array($logs) ? array_reverse($logs, true) : [];
+    }
+
+    /**
+     * Delete specific log entries by key (keys from all()).
+     *
+     * @param array<int|string> $keys
+     */
+    public function delete(array $keys): void
+    {
+        $logs = get_option(self::OPTION, []);
+        if (!is_array($logs) || !$keys) {
+            return;
+        }
+        foreach ($keys as $key) {
+            if (isset($logs[$key])) {
+                unset($logs[$key]);
+            }
+        }
+        update_option(self::OPTION, $logs, false);
+    }
+
+    /**
+     * Clear all logs.
+     */
+    public function clear(): void
+    {
+        delete_option(self::OPTION);
     }
 
     private function sanitize_context(array $context): array

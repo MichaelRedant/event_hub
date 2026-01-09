@@ -536,6 +536,41 @@ class CPT_Session
         $ticket_note = get_post_meta($post->ID, '_eh_ticket_note', true);
         $enable_module_meta = get_post_meta($post->ID, '_eh_enable_module', true);
         $enable_module = ($enable_module_meta === '') ? 1 : (int) $enable_module_meta;
+        $linked_event_cpt = (string) get_post_meta($post->ID, '_eh_linked_event_cpt', true);
+        $linked_event_id = (int) get_post_meta($post->ID, '_eh_linked_event_id', true);
+        $linked_post = $linked_event_id ? get_post($linked_event_id) : null;
+        $linked_title = $linked_post ? $linked_post->post_title : '';
+        $linked_edit = $linked_post ? get_edit_post_link($linked_post->ID) : '';
+        $linked_missing = $linked_event_id && (!$linked_post || ($linked_event_cpt && $linked_post->post_type !== $linked_event_cpt));
+        $linked_event_options = $linked_event_cpt ? $this->get_linked_event_options($linked_event_cpt) : [];
+        $linked_cpt_saved = (string) get_post_meta($post->ID, '_eh_linked_event_cpt', true);
+        $linked_id_saved = (int) get_post_meta($post->ID, '_eh_linked_event_id', true);
+        $linked_saved_post = $linked_id_saved ? get_post($linked_id_saved) : null;
+        $linked_saved_raw = (!$linked_saved_post && $linked_id_saved) ? $this->get_raw_post_data($linked_id_saved) : null;
+        $linked_saved_type = $linked_saved_post ? $linked_saved_post->post_type : ($linked_saved_raw['post_type'] ?? '');
+        $linked_saved_valid = $linked_saved_type !== '' && ($linked_cpt_saved === '' || $linked_saved_type === $linked_cpt_saved);
+        $linked_saved_unverified = $linked_id_saved && !$linked_saved_valid && $linked_saved_type === '';
+        $linked_saved_title = $linked_saved_post ? $linked_saved_post->post_title : (string) ($linked_saved_raw['post_title'] ?? '');
+        $linked_saved_edit = $linked_id_saved ? get_edit_post_link($linked_id_saved) : '';
+        $linked_saved_view = $linked_id_saved ? get_permalink($linked_id_saved) : '';
+        if ($linked_saved_valid) {
+            $in_list = false;
+            foreach ($linked_event_options as $opt) {
+                if ((int) $opt['id'] === $linked_id_saved) {
+                    $in_list = true;
+                    break;
+                }
+            }
+            if (!$in_list) {
+                array_unshift($linked_event_options, [
+                    'id' => $linked_id_saved,
+                    'title' => html_entity_decode((string) $linked_saved_title, ENT_QUOTES, 'UTF-8'),
+                    'status' => (string) $linked_saved_post->post_status,
+                    'edit_link' => $linked_saved_edit,
+                    'view_link' => $linked_saved_view,
+                ]);
+            }
+        }
 
         if (!$date_start && isset($_GET['eh_start'])) {
             $maybe = sanitize_text_field((string) $_GET['eh_start']);
@@ -563,6 +598,8 @@ class CPT_Session
         $sel_remind  = (array) get_post_meta($post->ID, '_eh_email_reminder_templates', true);
         $sel_follow  = (array) get_post_meta($post->ID, '_eh_email_followup_templates', true);
         $sel_waitlist = (array) get_post_meta($post->ID, '_eh_email_waitlist_templates', true);
+        $sel_event_cancel = (array) get_post_meta($post->ID, '_eh_email_event_cancelled_templates', true);
+        $sel_reg_cancel = (array) get_post_meta($post->ID, '_eh_email_registration_cancelled_templates', true);
         $custom_email_fields = [
             'confirmation' => __('Bevestiging inschrijving', 'event-hub'),
             'reminder' => __('Herinnering (voor start)', 'event-hub'),
@@ -909,6 +946,104 @@ class CPT_Session
                             </div>
                         </div>
                     </div>
+                    <div class="eh-field-card">
+                        <div class="eh-field-card__head">
+                            <h3><?php echo esc_html__('Koppeling met bestaand event', 'event-hub'); ?></h3>
+                            <p><?php echo esc_html__('Link deze sessie aan een event uit een ander CPT (bv. JetEngine).', 'event-hub'); ?></p>
+                        </div>
+                        <div class="eh-form-two-col">
+                            <div class="field">
+                                <label for="_eh_linked_event_cpt"><?php echo esc_html__('Event CPT-slug', 'event-hub'); ?></label>
+                                <input type="text" id="_eh_linked_event_cpt" name="_eh_linked_event_cpt" value="<?php echo esc_attr($linked_event_cpt); ?>" list="eh_linked_event_cpt_list" placeholder="bv. evenementen">
+                                <datalist id="eh_linked_event_cpt_list">
+                                    <?php
+                                    $post_types_for_link = get_post_types(['show_ui' => true], 'objects');
+                                    foreach ($post_types_for_link as $pt) {
+                                        $label = isset($pt->labels->singular_name) ? $pt->labels->singular_name : $pt->name;
+                                        echo '<option value="' . esc_attr($pt->name) . '">' . esc_html($label) . '</option>';
+                                    }
+                                    ?>
+                                </datalist>
+                                <p class="description"><?php echo esc_html__('Vul de CPT slug in waarin het event zit. Bijvoorbeeld: evenementen.', 'event-hub'); ?></p>
+                            </div>
+                            <div class="field">
+                                <label for="eh-linked-event-search"><?php echo esc_html__('Zoek event', 'event-hub'); ?></label>
+                                <input type="text" id="eh-linked-event-search" placeholder="<?php echo esc_attr__('Begin te typen om te zoeken...', 'event-hub'); ?>">
+                                <input type="hidden" id="_eh_linked_event_id" name="_eh_linked_event_id" value="<?php echo esc_attr((string) $linked_event_id); ?>">
+                                <input type="hidden" id="_eh_linked_event_nonce" value="<?php echo esc_attr(wp_create_nonce('event_hub_linked_event')); ?>">
+                                <div class="eh-linked-event-results" aria-live="polite"></div>
+                                <label for="eh-linked-event-select" style="margin-top:12px;"><?php echo esc_html__('Kies event (dropdown)', 'event-hub'); ?></label>
+                                <select id="eh-linked-event-select" class="eh-linked-event-select" name="eh_linked_event_select">
+                                    <option value=""><?php echo esc_html__('Selecteer event', 'event-hub'); ?></option>
+                                    <?php foreach ($linked_event_options as $opt) : ?>
+                                        <?php
+                                        $opt_label = $opt['title'] !== '' ? $opt['title'] : ('#' . $opt['id']);
+                                        if (!empty($opt['status'])) {
+                                            $opt_label .= ' [' . $opt['status'] . ']';
+                                        }
+                                        $opt_label .= ' (#' . $opt['id'] . ')';
+                                        ?>
+                                        <option value="<?php echo esc_attr((string) $opt['id']); ?>"
+                                            data-title="<?php echo esc_attr($opt['title']); ?>"
+                                            data-edit="<?php echo esc_url($opt['edit_link']); ?>"
+                                            data-view="<?php echo esc_url($opt['view_link']); ?>"
+                                            <?php selected($linked_event_id, (int) $opt['id']); ?>>
+                                            <?php echo esc_html($opt_label); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <?php if ($linked_event_cpt) : ?>
+                                    <p class="description"><?php echo esc_html__('Dropdown toont een beperkte lijst. Sla op om te verversen na wijziging van CPT-slug.', 'event-hub'); ?></p>
+                                <?php endif; ?>
+                                <div class="eh-linked-event-confirm" data-linked-valid="<?php echo $linked_saved_valid ? '1' : '0'; ?>">
+                                    <?php if ($linked_saved_valid) : ?>
+                                        <span class="eh-linked-event-ok"><?php echo esc_html__('Koppeling opgeslagen:', 'event-hub'); ?></span>
+                                        <strong><?php echo esc_html($linked_saved_title); ?></strong>
+                                        <span class="eh-linked-event-meta">#<?php echo esc_html((string) $linked_id_saved); ?></span>
+                                        <?php if ($linked_saved_view) : ?>
+                                            <a href="<?php echo esc_url($linked_saved_view); ?>" target="_blank" rel="noopener"><?php echo esc_html__('Bekijk', 'event-hub'); ?></a>
+                                        <?php endif; ?>
+                                        <?php if ($linked_saved_edit) : ?>
+                                            <a href="<?php echo esc_url($linked_saved_edit); ?>" target="_blank" rel="noopener"><?php echo esc_html__('Bewerk', 'event-hub'); ?></a>
+                                        <?php endif; ?>
+                                    <?php elseif ($linked_saved_unverified) : ?>
+                                        <span class="eh-linked-event-warn"><?php echo esc_html__('Koppeling opgeslagen, maar event niet gevalideerd.', 'event-hub'); ?></span>
+                                        <span class="eh-linked-event-meta">#<?php echo esc_html((string) $linked_id_saved); ?></span>
+                                        <?php if ($linked_saved_view) : ?>
+                                            <a href="<?php echo esc_url($linked_saved_view); ?>" target="_blank" rel="noopener"><?php echo esc_html__('Bekijk', 'event-hub'); ?></a>
+                                        <?php endif; ?>
+                                        <?php if ($linked_saved_edit) : ?>
+                                            <a href="<?php echo esc_url($linked_saved_edit); ?>" target="_blank" rel="noopener"><?php echo esc_html__('Bewerk', 'event-hub'); ?></a>
+                                        <?php endif; ?>
+                                    <?php else : ?>
+                                        <span class="eh-linked-event-empty"><?php echo esc_html__('Nog niet gekoppeld of koppeling ongeldig. Kies een event en sla op.', 'event-hub'); ?></span>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="eh-linked-event-selected"
+                                    data-current-id="<?php echo esc_attr((string) $linked_event_id); ?>"
+                                    data-current-title="<?php echo esc_attr($linked_title); ?>"
+                                    data-current-edit="<?php echo esc_url($linked_edit); ?>"
+                                    data-current-missing="<?php echo $linked_missing ? '1' : '0'; ?>">
+                                    <?php if ($linked_event_id && !$linked_missing) : ?>
+                                        <span><?php echo esc_html__('Gekoppeld:', 'event-hub'); ?></span>
+                                        <strong><?php echo esc_html($linked_title); ?></strong>
+                                        <span class="eh-linked-event-meta">#<?php echo esc_html((string) $linked_event_id); ?></span>
+                                        <?php if ($linked_edit) : ?>
+                                            <a href="<?php echo esc_url($linked_edit); ?>" target="_blank" rel="noopener"><?php echo esc_html__('Bewerk', 'event-hub'); ?></a>
+                                        <?php endif; ?>
+                                    <?php elseif ($linked_event_id && $linked_missing) : ?>
+                                        <span class="eh-linked-event-warn">
+                                            <?php echo esc_html__('Gekoppeld event niet gevonden (ID:', 'event-hub'); ?>
+                                            <?php echo esc_html((string) $linked_event_id); ?>)
+                                        </span>
+                                    <?php else : ?>
+                                        <span class="eh-linked-event-empty"><?php echo esc_html__('Nog geen event gekoppeld.', 'event-hub'); ?></span>
+                                    <?php endif; ?>
+                                </div>
+                                <button type="button" class="button" id="eh-linked-event-clear"><?php echo esc_html__('Koppeling wissen', 'event-hub'); ?></button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -1025,15 +1160,25 @@ class CPT_Session
                             $reminder_hours_val = (int) $legacy_days * 24;
                         }
                     }
+                    $confirmation_mode_val = get_post_meta($post->ID, '_eh_confirmation_timing_mode', true);
+                    $confirmation_hours_val = get_post_meta($post->ID, '_eh_confirmation_timing_hours', true);
+                    $waitlist_mode_val = get_post_meta($post->ID, '_eh_waitlist_timing_mode', true);
+                    $waitlist_hours_val = get_post_meta($post->ID, '_eh_waitlist_timing_hours', true);
 
                     $email_cards = [
                         [
                             'key' => 'waitlist',
                             'label' => __('Wachtlijst bevestiging', 'event-hub'),
-                            'desc' => __('Bevestigt inschrijving op de wachtlijst.', 'event-hub'),
+                            'desc' => __('Bevestigt inschrijving op de wachtlijst (planbaar).', 'event-hub'),
                             'select_name' => '_eh_email_waitlist_templates',
                             'selected' => $sel_waitlist,
-                            'timing' => null,
+                            'timing' => [
+                                'mode_name' => '_eh_waitlist_timing_mode',
+                                'mode_value' => $waitlist_mode_val,
+                                'hours_name' => '_eh_waitlist_timing_hours',
+                                'hours_value' => $waitlist_hours_val,
+                                'placeholder' => '24',
+                            ],
                             'badge' => __('Wachtlijst', 'event-hub'),
                         ],
                         [
@@ -1048,10 +1193,16 @@ class CPT_Session
                         [
                             'key' => 'confirmation',
                             'label' => __('Bevestiging (na inschrijving)', 'event-hub'),
-                            'desc' => __('Wordt onmiddellijk verstuurd.', 'event-hub'),
+                            'desc' => __('Plan of verstuur meteen.', 'event-hub'),
                             'select_name' => '_eh_email_confirm_templates',
                             'selected' => $sel_confirm,
-                            'timing' => null,
+                            'timing' => [
+                                'mode_name' => '_eh_confirmation_timing_mode',
+                                'mode_value' => $confirmation_mode_val,
+                                'hours_name' => '_eh_confirmation_timing_hours',
+                                'hours_value' => $confirmation_hours_val,
+                                'placeholder' => '24',
+                            ],
                             'badge' => __('Voor inschrijving', 'event-hub'),
                         ],
                         [
@@ -1082,6 +1233,24 @@ class CPT_Session
                             ],
                             'badge' => __('Na afloop', 'event-hub'),
                         ],
+                        [
+                            'key' => 'event_cancelled',
+                            'label' => __('Event geannuleerd', 'event-hub'),
+                            'desc' => __('Verstuur wanneer het event geannuleerd wordt.', 'event-hub'),
+                            'select_name' => '_eh_email_event_cancelled_templates',
+                            'selected' => $sel_event_cancel,
+                            'timing' => null,
+                            'badge' => __('Annulatie', 'event-hub'),
+                        ],
+                        [
+                            'key' => 'registration_cancelled',
+                            'label' => __('Inschrijving geannuleerd', 'event-hub'),
+                            'desc' => __('Bevestig annulatie van de inschrijving.', 'event-hub'),
+                            'select_name' => '_eh_email_registration_cancelled_templates',
+                            'selected' => $sel_reg_cancel,
+                            'timing' => null,
+                            'badge' => __('Annulatie', 'event-hub'),
+                        ],
                     ];
 
                     echo '<div class="eh-email-grid">';
@@ -1107,8 +1276,23 @@ class CPT_Session
                         echo '</div>';
                         if (!empty($card['timing'])) {
                             echo '<div class="eh-email-row">';
-                            echo '<label style="font-weight:600;">' . esc_html($card['timing']['label']) . '</label>';
-                            echo '<input type="number" name="' . esc_attr($card['timing']['name']) . '" placeholder="' . esc_attr($card['timing']['placeholder']) . '" value="' . esc_attr((string) $card['timing']['value']) . '" min="0" />';
+                            if (!empty($card['timing']['mode_name'])) {
+                                $mode_val = $card['timing']['mode_value'] ?: '';
+                                $mode_name = $card['timing']['mode_name'];
+                                echo '<label style="font-weight:600;">' . esc_html__('Versturen', 'event-hub') . '</label>';
+                                echo '<select name="' . esc_attr($mode_name) . '">';
+                                echo '<option value="">' . esc_html__('Gebruik algemene instelling', 'event-hub') . '</option>';
+                                echo '<option value="immediate"' . selected($mode_val, 'immediate', false) . '>' . esc_html__('Onmiddellijk', 'event-hub') . '</option>';
+                                echo '<option value="before_start"' . selected($mode_val, 'before_start', false) . '>' . esc_html__('X uren voor start', 'event-hub') . '</option>';
+                                echo '<option value="after_end"' . selected($mode_val, 'after_end', false) . '>' . esc_html__('X uren na einde/start', 'event-hub') . '</option>';
+                                echo '</select>';
+                                echo '<br />';
+                                echo '<label style="font-weight:600;margin-top:6px;display:block;">' . esc_html__('Uren (bij voor/na)', 'event-hub') . '</label>';
+                                echo '<input type="number" name="' . esc_attr($card['timing']['hours_name']) . '" placeholder="' . esc_attr($card['timing']['placeholder']) . '" value="' . esc_attr((string) $card['timing']['hours_value']) . '" min="0" />';
+                            } else {
+                                echo '<label style="font-weight:600;">' . esc_html($card['timing']['label']) . '</label>';
+                                echo '<input type="number" name="' . esc_attr($card['timing']['name']) . '" placeholder="' . esc_attr($card['timing']['placeholder']) . '" value="' . esc_attr((string) $card['timing']['value']) . '" min="0" />';
+                            }
                             echo '<span class="description">' . esc_html__('Laat leeg om de algemene instelling te gebruiken.', 'event-hub') . '</span>';
                             echo '</div>';
                         }
@@ -1601,6 +1785,7 @@ class CPT_Session
 
     public function save_meta_boxes(int $post_id): void
     {
+        $previous_linked_id = (int) get_post_meta($post_id, '_eh_linked_event_id', true);
         $this->debug_log('save_meta_boxes_attempt', [
             'post_id'    => $post_id,
             'post_type'  => get_post_type($post_id),
@@ -1627,6 +1812,8 @@ class CPT_Session
             return;
         }
 
+        $previous_status = get_post_meta($post_id, '_eh_status', true) ?: 'open';
+
         $date_start = isset($_POST['_eh_date_start']) ? sanitize_text_field((string) $_POST['_eh_date_start']) : '';
         $date_end   = isset($_POST['_eh_date_end']) ? sanitize_text_field((string) $_POST['_eh_date_end']) : '';
         $booking_open = isset($_POST['_eh_booking_open']) ? sanitize_text_field((string) $_POST['_eh_booking_open']) : '';
@@ -1649,6 +1836,24 @@ class CPT_Session
         $ticket_note = isset($_POST['_eh_ticket_note']) ? wp_kses_post((string) $_POST['_eh_ticket_note']) : '';
         $color      = isset($_POST['_eh_color']) ? sanitize_hex_color((string) $_POST['_eh_color']) : '#2271b1';
         $hero_override = isset($_POST['_eh_hero_image_override']) ? esc_url_raw((string) $_POST['_eh_hero_image_override']) : '';
+        $linked_event_cpt_input = isset($_POST['_eh_linked_event_cpt']) ? sanitize_key((string) $_POST['_eh_linked_event_cpt']) : '';
+        $linked_event_cpt = $linked_event_cpt_input !== '' ? Settings::resolve_post_type_slug($linked_event_cpt_input) : '';
+        $linked_event_id = isset($_POST['_eh_linked_event_id']) ? (int) $_POST['_eh_linked_event_id'] : 0;
+        if ($linked_event_id) {
+            $linked_post = get_post($linked_event_id);
+            $linked_raw = (!$linked_post) ? $this->get_raw_post_data($linked_event_id) : null;
+            if ($linked_post || $linked_raw) {
+                $actual_type = $linked_post ? $linked_post->post_type : (string) $linked_raw['post_type'];
+                if ($linked_event_cpt === '' || $actual_type !== $linked_event_cpt) {
+                    $linked_event_cpt = $actual_type;
+                }
+            } else {
+                // Keep the ID even if we cannot validate; matching will fall back to ID-only lookup.
+                if ($linked_event_cpt === '') {
+                    $linked_event_cpt = $linked_event_cpt_input;
+                }
+            }
+        }
         $use_local_builder = isset($_POST['_eh_use_local_builder']) ? 1 : 0;
         $builder_local = isset($_POST['_eh_builder_sections']) ? (string) $_POST['_eh_builder_sections'] : '';
         $allowed_sections = ['status','hero','info','content','form','custom1','custom2','quote','faq','agenda','buttons','gallery','card','textblock'];
@@ -1710,6 +1915,14 @@ class CPT_Session
         update_post_meta($post_id, '_eh_online_link', $online_link);
         update_post_meta($post_id, '_eh_agenda', $agenda);
         update_post_meta($post_id, '_eh_hero_image_override', $hero_override);
+        update_post_meta($post_id, '_eh_linked_event_cpt', $linked_event_cpt);
+        update_post_meta($post_id, '_eh_linked_event_id', $linked_event_id);
+        if ($previous_linked_id && $previous_linked_id !== $linked_event_id) {
+            delete_post_meta($previous_linked_id, '_eh_linked_session_id', $post_id);
+        }
+        if ($linked_event_id) {
+            update_post_meta($linked_event_id, '_eh_linked_session_id', $post_id);
+        }
         update_post_meta($post_id, '_eh_capacity', $capacity);
         update_post_meta($post_id, '_eh_enable_module', $enable_module_meta === '' ? 1 : (int) !empty($_POST['_eh_enable_module']));
         update_post_meta($post_id, '_eh_language', $language);
@@ -1734,10 +1947,14 @@ class CPT_Session
         $remind  = isset($_POST['_eh_email_reminder_templates']) ? array_map('intval', (array) $_POST['_eh_email_reminder_templates']) : [];
         $follow  = isset($_POST['_eh_email_followup_templates']) ? array_map('intval', (array) $_POST['_eh_email_followup_templates']) : [];
         $waitlist = isset($_POST['_eh_email_waitlist_templates']) ? array_map('intval', (array) $_POST['_eh_email_waitlist_templates']) : [];
+        $event_cancel = isset($_POST['_eh_email_event_cancelled_templates']) ? array_map('intval', (array) $_POST['_eh_email_event_cancelled_templates']) : [];
+        $reg_cancel = isset($_POST['_eh_email_registration_cancelled_templates']) ? array_map('intval', (array) $_POST['_eh_email_registration_cancelled_templates']) : [];
         update_post_meta($post_id, '_eh_email_confirm_templates', $confirm);
         update_post_meta($post_id, '_eh_email_reminder_templates', $remind);
         update_post_meta($post_id, '_eh_email_followup_templates', $follow);
         update_post_meta($post_id, '_eh_email_waitlist_templates', $waitlist);
+        update_post_meta($post_id, '_eh_email_event_cancelled_templates', $event_cancel);
+        update_post_meta($post_id, '_eh_email_registration_cancelled_templates', $reg_cancel);
         $reminder_offset_hours = '';
         if (isset($_POST['_eh_reminder_offset_hours']) && $_POST['_eh_reminder_offset_hours'] !== '') {
             $reminder_offset_hours = max(0, (int) $_POST['_eh_reminder_offset_hours']);
@@ -1749,7 +1966,18 @@ class CPT_Session
         update_post_meta($post_id, '_eh_reminder_offset_hours', $reminder_offset_hours);
         update_post_meta($post_id, '_eh_reminder_offset_days', $legacy_reminder_days);
         update_post_meta($post_id, '_eh_followup_offset_hours', $followup_offset);
-        $custom_email_fields = ['confirmation','reminder','followup','waitlist','waitlist_promotion'];
+        $allowed_timing = ['immediate','before_start','after_end'];
+        $conf_mode = isset($_POST['_eh_confirmation_timing_mode']) ? sanitize_text_field((string) $_POST['_eh_confirmation_timing_mode']) : '';
+        $conf_mode = in_array($conf_mode, $allowed_timing, true) ? $conf_mode : '';
+        $conf_hours = isset($_POST['_eh_confirmation_timing_hours']) && $_POST['_eh_confirmation_timing_hours'] !== '' ? max(0, (int) $_POST['_eh_confirmation_timing_hours']) : '';
+        $wait_mode = isset($_POST['_eh_waitlist_timing_mode']) ? sanitize_text_field((string) $_POST['_eh_waitlist_timing_mode']) : '';
+        $wait_mode = in_array($wait_mode, $allowed_timing, true) ? $wait_mode : '';
+        $wait_hours = isset($_POST['_eh_waitlist_timing_hours']) && $_POST['_eh_waitlist_timing_hours'] !== '' ? max(0, (int) $_POST['_eh_waitlist_timing_hours']) : '';
+        update_post_meta($post_id, '_eh_confirmation_timing_mode', $conf_mode);
+        update_post_meta($post_id, '_eh_confirmation_timing_hours', $conf_hours);
+        update_post_meta($post_id, '_eh_waitlist_timing_mode', $wait_mode);
+        update_post_meta($post_id, '_eh_waitlist_timing_hours', $wait_hours);
+        $custom_email_fields = ['confirmation','reminder','followup','waitlist','waitlist_promotion','event_cancelled','registration_cancelled'];
         foreach ($custom_email_fields as $key) {
             $subj = isset($_POST['_eh_email_custom_' . $key . '_subject']) ? wp_kses_post((string) $_POST['_eh_email_custom_' . $key . '_subject']) : '';
             $body = isset($_POST['_eh_email_custom_' . $key . '_body']) ? wp_kses_post((string) $_POST['_eh_email_custom_' . $key . '_body']) : '';
@@ -1804,6 +2032,10 @@ class CPT_Session
             : [];
         update_post_meta($post_id, '_eh_form_hide_fields', $hide_fields);
 
+        if ($previous_status !== 'cancelled' && $status === 'cancelled') {
+            do_action('event_hub_session_cancelled', $post_id);
+        }
+
         // Recalculate capacity status and promote waitlist if needed after admin changes.
         $this->registrations->sync_session_status($post_id);
 
@@ -1815,6 +2047,209 @@ class CPT_Session
             'status'     => $status,
         ]);
     }
+
+    public function ajax_search_linked_events(): void
+    {
+        check_ajax_referer('event_hub_linked_event', 'nonce');
+        if (!current_user_can('edit_posts')) {
+            wp_send_json_error(['message' => __('Geen toegang.', 'event-hub')], 403);
+        }
+        $cpt = isset($_POST['cpt']) ? sanitize_key((string) $_POST['cpt']) : '';
+        $term = isset($_POST['term']) ? sanitize_text_field(wp_unslash((string) $_POST['term'])) : '';
+        $use_recent = !empty($_POST['recent']);
+        $use_all = !empty($_POST['all']);
+        if ($cpt === '' || !post_type_exists($cpt)) {
+            $resolved = Settings::resolve_post_type_slug($cpt);
+            if ($resolved && post_type_exists($resolved)) {
+                $cpt = $resolved;
+            }
+        }
+        if ($cpt === '') {
+            wp_send_json_error(['message' => __('Ongeldige CPT-slug.', 'event-hub')]);
+        }
+        if (!post_type_exists($cpt)) {
+            global $wpdb;
+            $exists = $wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE post_type = %s LIMIT 1", $cpt));
+            if (!$exists) {
+                wp_send_json_error(['message' => __('Ongeldige CPT-slug.', 'event-hub')]);
+            }
+        }
+        if ($use_recent) {
+            $use_all = false;
+            $term = '';
+        }
+        if ($use_all) {
+            $term = '';
+        }
+        $term = trim($term);
+        $items = [];
+        $numeric_id = 0;
+        if ($term !== '') {
+            if (ctype_digit($term)) {
+                $numeric_id = (int) $term;
+            } elseif (preg_match('/^#(\d+)$/', $term, $m)) {
+                $numeric_id = (int) $m[1];
+            }
+        }
+        if ($numeric_id > 0) {
+            $post = get_post($numeric_id);
+            if ($post && $post->post_type === $cpt) {
+                $items[] = [
+                    'id' => $post->ID,
+                    'title' => html_entity_decode(get_the_title($post->ID), ENT_QUOTES, 'UTF-8'),
+                    'status' => $post->post_status,
+                    'edit_link' => get_edit_post_link($post->ID, 'raw'),
+                    'view_link' => get_permalink($post->ID),
+                ];
+            }
+        }
+
+        $query_args = [
+            'post_type' => $cpt,
+            'post_status' => 'any',
+            'posts_per_page' => $use_recent ? 10 : ($use_all ? 50 : 20),
+            'no_found_rows' => true,
+            'ignore_sticky_posts' => true,
+        ];
+        if ($use_recent) {
+            $query_args['orderby'] = 'date';
+            $query_args['order'] = 'DESC';
+        } elseif ($use_all) {
+            $query_args['orderby'] = 'title';
+            $query_args['order'] = 'ASC';
+        } else {
+            $query_args['orderby'] = 'title';
+            $query_args['order'] = 'ASC';
+        }
+        $query = null;
+        $use_term_filter = (!$use_recent && !$use_all && $term !== '');
+        if ($use_term_filter) {
+            global $wpdb;
+            $like = '%' . $wpdb->esc_like($term) . '%';
+            $filter = static function (string $where) use ($wpdb, $like): string {
+                return $where . $wpdb->prepare(" AND ({$wpdb->posts}.post_title LIKE %s OR {$wpdb->posts}.post_name LIKE %s)", $like, $like);
+            };
+            add_filter('posts_where', $filter);
+            $query = new \WP_Query($query_args);
+            remove_filter('posts_where', $filter);
+        } else {
+            $query = new \WP_Query($query_args);
+        }
+        if (!$query->have_posts()) {
+            $fallback_args = $query_args;
+            $fallback_args['suppress_filters'] = true;
+            if ($use_term_filter) {
+                global $wpdb;
+                $like = '%' . $wpdb->esc_like($term) . '%';
+                $filter = static function (string $where) use ($wpdb, $like): string {
+                    return $where . $wpdb->prepare(" AND ({$wpdb->posts}.post_title LIKE %s OR {$wpdb->posts}.post_name LIKE %s)", $like, $like);
+                };
+                add_filter('posts_where', $filter);
+                $query = new \WP_Query($fallback_args);
+                remove_filter('posts_where', $filter);
+            } else {
+                $query = new \WP_Query($fallback_args);
+            }
+        }
+        if (!$query->have_posts()) {
+            global $wpdb;
+            $statuses = ['publish', 'future', 'draft', 'pending', 'private'];
+            $status_placeholders = implode(', ', array_fill(0, count($statuses), '%s'));
+            $params = array_merge([$cpt], $statuses);
+            $where = "post_type = %s AND post_status IN ({$status_placeholders})";
+            if ($use_term_filter) {
+                $like = '%' . $wpdb->esc_like($term) . '%';
+                $where .= " AND ({$wpdb->posts}.post_title LIKE %s OR {$wpdb->posts}.post_name LIKE %s)";
+                $params[] = $like;
+                $params[] = $like;
+            }
+            $limit = $use_recent ? 10 : ($use_all ? 50 : 20);
+            $order_by = $use_recent ? "{$wpdb->posts}.post_date DESC" : "{$wpdb->posts}.post_title ASC";
+            $sql = "SELECT ID, post_title, post_status FROM {$wpdb->posts} WHERE {$where} ORDER BY {$order_by} LIMIT %d";
+            $params[] = $limit;
+            $rows = $wpdb->get_results($wpdb->prepare($sql, ...$params));
+            if ($rows) {
+                foreach ($rows as $row) {
+                    $items[] = [
+                        'id' => (int) $row->ID,
+                        'title' => html_entity_decode((string) $row->post_title, ENT_QUOTES, 'UTF-8'),
+                        'status' => (string) $row->post_status,
+                        'edit_link' => get_edit_post_link((int) $row->ID, 'raw'),
+                        'view_link' => get_permalink((int) $row->ID),
+                    ];
+                }
+            }
+            wp_send_json_success($items);
+        }
+        if ($query->have_posts()) {
+            foreach ($query->posts as $item) {
+                if ($numeric_id > 0 && $item->ID === $numeric_id) {
+                    continue;
+                }
+                $items[] = [
+                    'id' => $item->ID,
+                    'title' => html_entity_decode(get_the_title($item->ID), ENT_QUOTES, 'UTF-8'),
+                    'status' => $item->post_status,
+                    'edit_link' => get_edit_post_link($item->ID, 'raw'),
+                    'view_link' => get_permalink($item->ID),
+                ];
+            }
+        }
+        wp_send_json_success($items);
+    }
+
+    private function get_linked_event_options(string $cpt, int $limit = 200): array
+    {
+        $cpt = Settings::resolve_post_type_slug($cpt);
+        if ($cpt === '') {
+            return [];
+        }
+        $args = [
+            'post_type' => $cpt,
+            'post_status' => 'any',
+            'posts_per_page' => $limit,
+            'orderby' => 'title',
+            'order' => 'ASC',
+            'no_found_rows' => true,
+            'ignore_sticky_posts' => true,
+        ];
+        $items = [];
+        $query = new \WP_Query($args);
+        if (!$query->have_posts()) {
+            $args['suppress_filters'] = true;
+            $query = new \WP_Query($args);
+        }
+        if ($query->have_posts()) {
+            foreach ($query->posts as $item) {
+                $items[] = [
+                    'id' => (int) $item->ID,
+                    'title' => html_entity_decode(get_the_title($item->ID), ENT_QUOTES, 'UTF-8'),
+                    'status' => (string) $item->post_status,
+                    'edit_link' => get_edit_post_link($item->ID, 'raw'),
+                    'view_link' => get_permalink($item->ID),
+                ];
+            }
+            return $items;
+        }
+
+        global $wpdb;
+        $statuses = ['publish', 'future', 'draft', 'pending', 'private'];
+        $status_placeholders = implode(', ', array_fill(0, count($statuses), '%s'));
+        $sql = "SELECT ID, post_title, post_status FROM {$wpdb->posts} WHERE post_type = %s AND post_status IN ({$status_placeholders}) ORDER BY {$wpdb->posts}.post_title ASC LIMIT %d";
+        $params = array_merge([$cpt], $statuses, [max(1, $limit)]);
+        $rows = $wpdb->get_results($wpdb->prepare($sql, ...$params));
+        foreach ($rows as $row) {
+            $items[] = [
+                'id' => (int) $row->ID,
+                'title' => html_entity_decode((string) $row->post_title, ENT_QUOTES, 'UTF-8'),
+                'status' => (string) $row->post_status,
+                'edit_link' => get_edit_post_link((int) $row->ID, 'raw'),
+                'view_link' => get_permalink((int) $row->ID),
+            ];
+        }
+        return $items;
+    }
+
     public function intercept_wp_redirect(string $location, int $status): string
     {
         $post_id = isset($_POST['post_ID']) ? (int) $_POST['post_ID'] : 0;
@@ -1841,6 +2276,22 @@ class CPT_Session
         ]);
 
         return $forced;
+    }
+
+    private function get_raw_post_data(int $post_id): ?array
+    {
+        if ($post_id <= 0) {
+            return null;
+        }
+        global $wpdb;
+        $row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT ID, post_title, post_type, post_status FROM {$wpdb->posts} WHERE ID = %d",
+                $post_id
+            ),
+            ARRAY_A
+        );
+        return $row ?: null;
     }
 
     private function debug_log(string $tag, array $payload): void

@@ -48,9 +48,9 @@ class Plugin
         $this->migrations->run();
 
         // Register CPT + Tax + Meta Boxes
-        add_action('init', [$this->cpt_session, 'register_post_type']);
-        add_action('init', [$this->cpt_session, 'register_taxonomies']);
-        add_action('init', [$this->cpt_session, 'register_shortcodes']);
+        add_action('init', [$this->cpt_session, 'register_post_type'], 20);
+        add_action('init', [$this->cpt_session, 'register_taxonomies'], 20);
+        add_action('init', [$this->cpt_session, 'register_shortcodes'], 20);
         add_action('add_meta_boxes', [$this->cpt_session, 'register_meta_boxes']);
         add_action('save_post', [$this->cpt_session, 'save_meta_boxes']);
         add_action('admin_notices', [$this->cpt_session, 'maybe_notice_missing_templates']);
@@ -82,6 +82,9 @@ class Plugin
         add_action('init', [$this->cpt_email, 'register_post_type']);
         add_action('add_meta_boxes', [$this->cpt_email, 'register_meta_boxes']);
         add_action('save_post', [$this->cpt_email, 'save_meta_boxes']);
+        add_filter('redirect_post_location', [$this->cpt_email, 'keep_edit_redirect'], 90, 2);
+        add_action('admin_post_eh_email_send_test', [$this->cpt_email, 'handle_send_test']);
+        add_action('admin_notices', [$this->cpt_email, 'maybe_notice_test']);
 
         // Admin menus and pages
         add_action('admin_menu', [$this->admin_menus, 'register_menus']);
@@ -89,6 +92,8 @@ class Plugin
         add_action('wp_ajax_event_hub_calendar_events', [$this->admin_menus, 'ajax_calendar_events']);
         add_action('wp_ajax_event_hub_public_calendar', [$this->admin_menus, 'ajax_public_calendar_events']);
         add_action('wp_ajax_nopriv_event_hub_public_calendar', [$this->admin_menus, 'ajax_public_calendar_events']);
+        add_action('wp_ajax_event_hub_search_linked_events', [$this->cpt_session, 'ajax_search_linked_events']);
+        add_action('admin_post_event_hub_delete_logs', [$this->admin_menus, 'handle_delete_logs']);
 
         // Settings page
         add_action('admin_init', [$this->settings, 'register_settings']);
@@ -178,7 +183,7 @@ class Plugin
         }
 
         $now = time();
-        $target_hooks = ['event_hub_send_reminder', 'event_hub_send_followup'];
+        $target_hooks = ['event_hub_send_reminder', 'event_hub_send_followup', 'event_hub_send_confirmation', 'event_hub_send_waitlist_created', 'event_hub_retry_email'];
 
         foreach ($crons as $timestamp => $jobs) {
             if ($timestamp > $now) {

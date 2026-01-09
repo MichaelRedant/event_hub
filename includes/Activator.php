@@ -63,6 +63,10 @@ class Activator
             'reminder_offset_days' => 3,
             'followup_offset_hours' => 24,
             'cancel_cutoff_hours' => 24,
+            'confirmation_timing_mode' => 'immediate',
+            'confirmation_timing_hours' => 24,
+            'waitlist_timing_mode' => 'immediate',
+            'waitlist_timing_hours' => 24,
             'custom_placeholders_raw' => '',
             'custom_placeholders' => [],
         ];

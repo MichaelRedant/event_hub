@@ -143,4 +143,251 @@
             }, true);
         }
     })();
+
+    (function initLinkedEventSearch() {
+        const cptInput = document.getElementById('_eh_linked_event_cpt');
+        const searchInput = document.getElementById('eh-linked-event-search');
+        const resultsEl = document.querySelector('.eh-linked-event-results');
+        const selectedEl = document.querySelector('.eh-linked-event-selected');
+        const idInput = document.getElementById('_eh_linked_event_id');
+        const nonceEl = document.getElementById('_eh_linked_event_nonce');
+        const clearBtn = document.getElementById('eh-linked-event-clear');
+        const selectEl = document.getElementById('eh-linked-event-select');
+
+        if (!cptInput || !searchInput || !resultsEl || !selectedEl || !idInput || !nonceEl) {
+            return;
+        }
+        if (typeof ajaxurl === 'undefined') {
+            return;
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, (s) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[s]));
+        }
+
+        function renderSelected(info) {
+            if (!info || !info.id) {
+                selectedEl.innerHTML = '<span class="eh-linked-event-empty">Nog geen event gekoppeld.</span>';
+                if (clearBtn) {
+                    clearBtn.disabled = true;
+                }
+                if (selectEl) {
+                    selectEl.value = '';
+                }
+                const confirmEl = document.querySelector('.eh-linked-event-confirm');
+                if (confirmEl) {
+                    confirmEl.innerHTML = '<span class="eh-linked-event-empty">Nog niet gekoppeld of koppeling ongeldig. Kies een event en sla op.</span>';
+                    confirmEl.dataset.linkedValid = '0';
+                }
+                return;
+            }
+            const title = info.title ? escapeHtml(info.title) : 'Onbekend event';
+            const safeEdit = info.editUrl ? escapeHtml(info.editUrl) : '';
+            const missing = info.missing ? ' <span class="eh-linked-event-warn">(niet gevonden)</span>' : '';
+            const editLink = safeEdit ? ' <a href="' + safeEdit + '" target="_blank" rel="noopener">Bewerk</a>' : '';
+            selectedEl.innerHTML = '<span>Gekoppeld:</span> <strong>' + title + '</strong> <span class="eh-linked-event-meta">#' + info.id + '</span>' + missing + editLink;
+            if (clearBtn) {
+                clearBtn.disabled = false;
+            }
+            const confirmEl = document.querySelector('.eh-linked-event-confirm');
+            if (confirmEl && !info.missing) {
+                const viewUrl = info.viewUrl ? escapeHtml(info.viewUrl) : '';
+                const viewLink = viewUrl ? ' <a href="' + viewUrl + '" target="_blank" rel="noopener">Bekijk</a>' : '';
+                const shouldRender = info.forceConfirm || confirmEl.dataset.linkedValid !== '1';
+                if (shouldRender) {
+                    confirmEl.innerHTML = '<span class="eh-linked-event-ok">Koppeling geselecteerd (sla op om te bevestigen):</span> <strong>' + title + '</strong> <span class="eh-linked-event-meta">#' + info.id + '</span>' + viewLink + editLink;
+                    confirmEl.dataset.linkedValid = '0';
+                }
+            }
+            if (selectEl) {
+                const value = String(info.id);
+                let opt = selectEl.querySelector('option[value="' + value.replace(/"/g, '\\"') + '"]');
+                if (!opt) {
+                    opt = document.createElement('option');
+                    opt.value = value;
+                    opt.textContent = (info.title ? info.title : 'Event') + ' (#' + value + ')';
+                    if (info.editUrl) {
+                        opt.dataset.edit = info.editUrl;
+                    }
+                    opt.dataset.title = info.title || '';
+                    selectEl.appendChild(opt);
+                }
+                selectEl.value = value;
+            }
+        }
+
+        const initial = {
+            id: parseInt(selectedEl.dataset.currentId || '0', 10) || 0,
+            title: selectedEl.dataset.currentTitle || '',
+            editUrl: selectedEl.dataset.currentEdit || '',
+            missing: selectedEl.dataset.currentMissing === '1'
+        };
+        if (initial.id) {
+            renderSelected(initial);
+        } else if (clearBtn) {
+            clearBtn.disabled = true;
+        }
+
+        function renderMessage(message) {
+            resultsEl.innerHTML = '<div class="eh-linked-event-empty">' + escapeHtml(message) + '</div>';
+        }
+
+        function renderEmpty(message, actions) {
+            resultsEl.innerHTML = '';
+            const msg = document.createElement('div');
+            msg.className = 'eh-linked-event-empty';
+            msg.textContent = message;
+            resultsEl.appendChild(msg);
+            if (actions && actions.recent) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'button eh-linked-event-action';
+                btn.textContent = 'Toon recente events';
+                btn.addEventListener('click', () => runSearch('', { recent: true }));
+                resultsEl.appendChild(btn);
+            }
+            if (actions && actions.all) {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'button eh-linked-event-action';
+                btn.textContent = 'Toon alle events';
+                btn.addEventListener('click', () => runSearch('', { all: true }));
+                resultsEl.appendChild(btn);
+            }
+        }
+
+        function renderResults(items, term, useRecent, useAll) {
+            resultsEl.innerHTML = '';
+            if (!items || !items.length) {
+                if (useRecent) {
+                    renderEmpty('Geen recente events gevonden.', { all: true });
+                } else if (useAll) {
+                    renderEmpty('Geen events gevonden.', { recent: true });
+                } else {
+                    renderEmpty('Geen events gevonden.', { recent: true, all: true });
+                }
+                return;
+            }
+            items.forEach((item) => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'eh-linked-event-result';
+                const status = item.status ? ' [' + item.status + ']' : '';
+                btn.textContent = (item.title || 'Onbekend') + status + ' (#' + item.id + ')';
+                btn.addEventListener('click', () => {
+                    idInput.value = item.id;
+                    renderSelected({
+                        id: item.id,
+                        title: item.title || '',
+                        editUrl: item.edit_link || '',
+                        viewUrl: item.view_link || '',
+                        forceConfirm: true,
+                        missing: false
+                    });
+                    resultsEl.innerHTML = '';
+                    searchInput.value = '';
+                });
+                resultsEl.appendChild(btn);
+            });
+        }
+
+        let timer = null;
+        function runSearch(term, options) {
+            const opts = options || {};
+            const useRecent = !!opts.recent;
+            const useAll = !!opts.all;
+            const cpt = (cptInput.value || '').trim();
+            if (!cpt) {
+                renderMessage('Vul eerst CPT-slug in.');
+                return;
+            }
+            if (!useRecent && !useAll && term.length < 1) {
+                resultsEl.innerHTML = '';
+                return;
+            }
+            if (useRecent || useAll) {
+                term = '';
+            }
+            const payload = new URLSearchParams();
+            payload.append('action', 'event_hub_search_linked_events');
+            payload.append('nonce', nonceEl.value || '');
+            payload.append('cpt', cpt);
+            payload.append('term', term);
+            if (useRecent) {
+                payload.append('recent', '1');
+            }
+            if (useAll) {
+                payload.append('all', '1');
+            }
+            fetch(ajaxurl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                body: payload.toString()
+            })
+                .then((res) => res.json())
+                .then((data) => {
+                    if (!data || !data.success) {
+                        const msg = data && data.data && data.data.message ? data.data.message : 'Zoeken mislukt.';
+                        renderMessage(msg);
+                        return;
+                    }
+                    renderResults(data.data || [], term, useRecent, useAll);
+                })
+                .catch(() => renderMessage('Zoeken mislukt.'));
+        }
+
+        searchInput.addEventListener('input', () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => runSearch(searchInput.value.trim()), 250);
+        });
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+            }
+        });
+        cptInput.addEventListener('change', () => {
+            idInput.value = '';
+            renderSelected(null);
+            resultsEl.innerHTML = '';
+        });
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                idInput.value = '';
+                renderSelected(null);
+                resultsEl.innerHTML = '';
+            });
+        }
+        if (selectEl) {
+            selectEl.addEventListener('change', () => {
+                const value = selectEl.value ? parseInt(selectEl.value, 10) : 0;
+                if (!value) {
+                    idInput.value = '';
+                    renderSelected(null);
+                    return;
+                }
+                const opt = selectEl.options[selectEl.selectedIndex];
+                const title = opt && opt.dataset && opt.dataset.title ? opt.dataset.title : (opt ? opt.textContent : '');
+                const editUrl = opt && opt.dataset ? opt.dataset.edit : '';
+                const viewUrl = opt && opt.dataset ? opt.dataset.view : '';
+                idInput.value = String(value);
+                renderSelected({
+                    id: value,
+                    title: title || '',
+                    editUrl: editUrl || '',
+                    viewUrl: viewUrl || '',
+                    forceConfirm: true,
+                    missing: false
+                });
+                resultsEl.innerHTML = '';
+                searchInput.value = '';
+            });
+        }
+    })();
 })();

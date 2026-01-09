@@ -80,6 +80,7 @@ class Widget_Staff_Portal extends Widget_Base
         wp_enqueue_style('event-hub-staff-portal');
 
         $rest_url = rest_url('event-hub/v1/registrations');
+        $views_url = rest_url('event-hub/v1/registrations/views');
         $nonce = wp_create_nonce('wp_rest');
         $events_data = array_map(static function ($post) {
             return [
@@ -94,8 +95,9 @@ class Widget_Staff_Portal extends Widget_Base
         }
 
         $data_attrs = sprintf(
-            'data-rest="%s" data-nonce="%s" data-events="%s" data-fields="%s"',
+            'data-rest="%s" data-views="%s" data-nonce="%s" data-events="%s" data-fields="%s"',
             esc_url($rest_url),
+            esc_url($views_url),
             esc_attr($nonce),
             esc_attr(wp_json_encode($events_data)),
             esc_attr(wp_json_encode($fields))
@@ -115,6 +117,21 @@ class Widget_Staff_Portal extends Widget_Base
             <div class="eh-sp-fields">
                 <p><strong><?php esc_html_e('Velden voor export/overzicht', 'event-hub'); ?></strong></p>
                 <div class="eh-sp-field-list"></div>
+            </div>
+            <div class="eh-sp-views">
+                <div>
+                    <label><?php esc_html_e('Opgeslagen view', 'event-hub'); ?>
+                        <select class="eh-sp-view-select">
+                            <option value=""><?php esc_html_e('Kies een view', 'event-hub'); ?></option>
+                        </select>
+                    </label>
+                    <button type="button" class="eh-sp-view-apply button-secondary"><?php esc_html_e('Toepassen', 'event-hub'); ?></button>
+                    <button type="button" class="eh-sp-view-delete button-secondary"><?php esc_html_e('Verwijder', 'event-hub'); ?></button>
+                </div>
+                <div class="eh-sp-view-save">
+                    <input type="text" class="eh-sp-view-name" placeholder="<?php esc_attr_e('Naam voor nieuwe view', 'event-hub'); ?>" />
+                    <button type="button" class="eh-sp-view-save-btn button"><?php esc_html_e('View opslaan', 'event-hub'); ?></button>
+                </div>
             </div>
             <div class="eh-sp-actions">
                 <button type="button" class="eh-sp-export-csv"><?php esc_html_e('Exporteer CSV', 'event-hub'); ?></button>

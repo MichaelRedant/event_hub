@@ -45,6 +45,14 @@ class Widget_Session_Slider extends Widget_Base
             'max' => 10,
         ]);
 
+        $this->add_control('filter_linked_current', [
+            'label' => __('Filter op gekoppeld event (huidige post)', 'event-hub'),
+            'type' => Controls_Manager::SWITCHER,
+            'return_value' => 'yes',
+            'default' => 'yes',
+            'description' => __('Op externe single (bv. JetEngine) tonen we enkel gekoppelde events.', 'event-hub'),
+        ]);
+
         $this->add_control('only_future', [
             'label' => __('Enkel toekomstige events', 'event-hub'),
             'type' => Controls_Manager::SWITCHER,
@@ -118,6 +126,10 @@ class Widget_Session_Slider extends Widget_Base
                 'compare' => '>=',
                 'type' => 'DATETIME',
             ];
+        }
+        $linked_meta = $this->get_linked_meta_query($settings);
+        if ($linked_meta) {
+            $meta_query = array_merge($meta_query, $linked_meta);
         }
         $tax_query = [];
         if (!empty($settings['session_type'])) {
@@ -196,6 +208,36 @@ class Widget_Session_Slider extends Widget_Base
         echo '</div>';
         wp_reset_postdata();
         $this->inline_assets();
+    }
+
+    private function get_linked_meta_query(array $settings): array
+    {
+        if (empty($settings['filter_linked_current']) || $settings['filter_linked_current'] !== 'yes') {
+            return [];
+        }
+        $cpt = Settings::get_cpt_slug();
+        $candidate = get_queried_object_id();
+        if (!$candidate) {
+            $candidate = get_the_ID();
+        }
+        if (!$candidate) {
+            return [];
+        }
+        $candidate_type = get_post_type($candidate);
+        if (!$candidate_type || $candidate_type === $cpt) {
+            return [];
+        }
+        return [
+            [
+                'key' => '_eh_linked_event_cpt',
+                'value' => $candidate_type,
+            ],
+            [
+                'key' => '_eh_linked_event_id',
+                'value' => (string) $candidate,
+                'compare' => '=',
+            ],
+        ];
     }
 
     private function get_status_badge(int $post_id): ?array

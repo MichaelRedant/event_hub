@@ -259,6 +259,7 @@ class Registrations
         if (!$existing) {
             return false;
         }
+        $previous_status = $existing['status'] ?? '';
 
         global $wpdb;
         $fields = [];
@@ -300,6 +301,10 @@ class Registrations
         $res = $wpdb->update($this->table, $fields, ['id' => $id], $formats, ['%d']);
         if ($res !== false) {
             $this->sync_session_status((int) $existing['session_id']);
+            $next_status = isset($fields['status']) ? (string) $fields['status'] : $previous_status;
+            if ($previous_status !== 'cancelled' && $next_status === 'cancelled') {
+                do_action('event_hub_registration_cancelled', $id);
+            }
         }
         return $res !== false;
     }
@@ -592,6 +597,37 @@ class Registrations
                 'fields' => [
                     'required' => false,
                     'type' => 'array',
+                ],
+            ],
+        ]);
+        register_rest_route('event-hub/v1', '/registrations/views', [
+            'methods' => WP_REST_Server::READABLE,
+            'callback' => [$this, 'handle_rest_list_views'],
+            'permission_callback' => [$this, 'rest_can_manage_registrations'],
+        ]);
+        register_rest_route('event-hub/v1', '/registrations/views', [
+            'methods' => WP_REST_Server::CREATABLE,
+            'callback' => [$this, 'handle_rest_save_view'],
+            'permission_callback' => [$this, 'rest_can_manage_registrations'],
+            'args' => [
+                'name' => [
+                    'required' => true,
+                    'type' => 'string',
+                ],
+                'fields' => [
+                    'required' => true,
+                    'type' => 'array',
+                ],
+            ],
+        ]);
+        register_rest_route('event-hub/v1', '/registrations/views', [
+            'methods' => WP_REST_Server::DELETABLE,
+            'callback' => [$this, 'handle_rest_delete_view'],
+            'permission_callback' => [$this, 'rest_can_manage_registrations'],
+            'args' => [
+                'name' => [
+                    'required' => true,
+                    'type' => 'string',
                 ],
             ],
         ]);
@@ -962,6 +998,59 @@ class Registrations
         ]);
     }
 
+    public function handle_rest_list_views(WP_REST_Request $request): WP_REST_Response
+    {
+        return new WP_REST_Response([
+            'success' => true,
+            'views' => $this->get_user_views(),
+        ]);
+    }
+
+    public function handle_rest_save_view(WP_REST_Request $request): WP_REST_Response
+    {
+        $name = sanitize_text_field((string) $request->get_param('name'));
+        $fields = $request->get_param('fields');
+        $available = $this->get_export_fields();
+        if ($name === '' || !is_array($fields)) {
+            return new WP_REST_Response([
+                'success' => false,
+                'message' => __('Naam of velden ontbreken.', 'event-hub'),
+            ], 400);
+        }
+        $clean_fields = array_values(array_intersect(array_keys($available), array_map('sanitize_key', $fields)));
+        if (!$clean_fields) {
+            return new WP_REST_Response([
+                'success' => false,
+                'message' => __('Geen geldige velden geselecteerd.', 'event-hub'),
+            ], 400);
+        }
+        $views = $this->get_user_views();
+        $views[$name] = $clean_fields;
+        $this->store_user_views($views);
+        return new WP_REST_Response([
+            'success' => true,
+            'views' => $views,
+        ]);
+    }
+
+    public function handle_rest_delete_view(WP_REST_Request $request): WP_REST_Response
+    {
+        $name = sanitize_text_field((string) $request->get_param('name'));
+        $views = $this->get_user_views();
+        if ($name === '' || !isset($views[$name])) {
+            return new WP_REST_Response([
+                'success' => false,
+                'message' => __('View niet gevonden.', 'event-hub'),
+            ], 404);
+        }
+        unset($views[$name]);
+        $this->store_user_views($views);
+        return new WP_REST_Response([
+            'success' => true,
+            'views' => $views,
+        ]);
+    }
+
     public function handle_rest_cancel(WP_REST_Request $request): WP_REST_Response
     {
         $token = sanitize_text_field((string) $request->get_param('token'));
@@ -984,6 +1073,26 @@ class Registrations
     public function rest_can_manage_registrations(): bool
     {
         return current_user_can('edit_posts');
+    }
+
+    /**
+     * @return array<string,array>
+     */
+    private function get_user_views(): array
+    {
+        if (!is_user_logged_in()) {
+            return [];
+        }
+        $views = get_user_meta(get_current_user_id(), 'event_hub_sp_views', true);
+        return is_array($views) ? $views : [];
+    }
+
+    private function store_user_views(array $views): void
+    {
+        if (!is_user_logged_in()) {
+            return;
+        }
+        update_user_meta(get_current_user_id(), 'event_hub_sp_views', $views);
     }
 
     /**

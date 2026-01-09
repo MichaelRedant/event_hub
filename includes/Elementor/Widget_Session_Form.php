@@ -49,6 +49,19 @@ class Widget_Session_Form extends Widget_Session_Detail
             'label_block' => true,
         ]);
 
+        $this->add_control('external_cpt_slug', [
+            'label' => __('Externe CPT-slug (override)', 'event-hub'),
+            'type' => Controls_Manager::TEXT,
+            'placeholder' => 'bv. evenementen',
+            'description' => __('Gebruik deze slug om de gekoppelde Event Hub sessie te zoeken, i.p.v. het huidige post type.', 'event-hub'),
+        ]);
+
+        $this->add_control('external_event_id', [
+            'label' => __('Externe event ID (override)', 'event-hub'),
+            'type' => Controls_Manager::NUMBER,
+            'description' => __('Gebruik dit ID om de koppeling te zoeken als detectie niet werkt.', 'event-hub'),
+        ]);
+
         $this->end_controls_section();
 
         $this->register_form_settings_controls();

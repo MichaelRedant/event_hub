@@ -45,6 +45,13 @@
 }
 .eh-sp-actions button:hover{transform:translateY(-1px);box-shadow:0 18px 40px rgba(34,211,238,0.4);}
 .eh-sp-actions button:last-child{background:linear-gradient(135deg,#8b5cf6,#a855f7);color:#0b1221;box-shadow:0 15px 30px rgba(139,92,246,0.35);}
+.eh-sp-views{display:flex;flex-direction:column;gap:10px;margin:10px 0 6px;}
+.eh-sp-views select,
+.eh-sp-view-name{background:#0b1221;color:#e5e7eb;border:1px solid #1f2937;padding:8px 10px;border-radius:10px;}
+.eh-sp-view-save{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.eh-sp-view-apply,
+.eh-sp-view-delete,
+.eh-sp-view-save-btn{margin-left:6px;}
 .eh-sp-status{min-height:20px;font-size:13px;color:#a5f3fc;margin-bottom:10px;}
 .eh-sp-status.error{color:#fca5a5;}
 .eh-sp-table-wrap{overflow:auto;border-radius:12px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);}

@@ -82,22 +82,6 @@ class Admin_Menus
 
             'event-hub',
 
-            __('E-mailsjablonen', 'event-hub'),
-
-            __('E-mailsjablonen', 'event-hub'),
-
-            'edit_posts',
-
-            'edit.php?post_type=' . CPT_Email::CPT
-
-        );
-
-
-
-        add_submenu_page(
-
-            'event-hub',
-
             __('Inschrijvingen', 'event-hub'),
 
             __('Inschrijvingen', 'event-hub'),
@@ -641,17 +625,12 @@ class Admin_Menus
         echo '<div class="eh-stat-grid">';
 
         $cards = [
-
             ['label' => __('Nieuwe inschrijvingen', 'event-hub'), 'value' => (string) $stats['registrations']],
-
             ['label' => __('Bevestigd', 'event-hub'), 'value' => (string) $stats['confirmed']],
-
             ['label' => __('Wachtlijst', 'event-hub'), 'value' => (string) $stats['waitlist']],
-
             ['label' => __('Events in periode', 'event-hub'), 'value' => (string) $stats['events']],
-
             ['label' => __('Verzonden mails (template)', 'event-hub'), 'value' => (string) $stats['template_mails']],
-
+            ['label' => __('No-show %', 'event-hub'), 'value' => $stats['no_show_rate']],
         ];
 
         foreach ($cards as $card) {
@@ -681,6 +660,34 @@ class Admin_Menus
             echo '</div>';
         }
 
+        echo '</div>';
+
+        echo '<div class="eh-panel">';
+        echo '<div class="eh-panel__head"><h2>' . esc_html__('Per maand', 'event-hub') . '</h2></div>';
+        if (!$stats['by_month']) {
+            echo '<p>' . esc_html__('Geen data in deze periode.', 'event-hub') . '</p>';
+        } else {
+            echo '<table class="widefat striped"><thead><tr>';
+            echo '<th>' . esc_html__('Maand', 'event-hub') . '</th>';
+            echo '<th>' . esc_html__('Inschrijvingen', 'event-hub') . '</th>';
+            echo '<th>' . esc_html__('Bevestigd', 'event-hub') . '</th>';
+            echo '<th>' . esc_html__('No-show', 'event-hub') . '</th>';
+            echo '<th>' . esc_html__('% No-show', 'event-hub') . '</th>';
+            echo '</tr></thead><tbody>';
+            foreach ($stats['by_month'] as $row) {
+                $rate = ($row['attended'] + $row['no_show']) > 0
+                    ? round(($row['no_show'] / ($row['attended'] + $row['no_show'])) * 100, 1) . '%'
+                    : '–';
+                echo '<tr>';
+                echo '<td>' . esc_html($row['label']) . '</td>';
+                echo '<td>' . esc_html((string) $row['total']) . '</td>';
+                echo '<td>' . esc_html((string) $row['confirmed']) . '</td>';
+                echo '<td>' . esc_html((string) $row['no_show']) . '</td>';
+                echo '<td>' . esc_html($rate) . '</td>';
+                echo '</tr>';
+            }
+            echo '</tbody></table>';
+        }
         echo '</div>';
         echo '</div>';
     }
@@ -727,91 +734,69 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
 
-        $regs = (int) $wpdb->get_var($wpdb->prepare(
+        $start_sql = esc_sql($start);
+        $end_sql   = esc_sql($end);
 
-            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN %s AND %s",
+        $regs = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN '{$start_sql}' AND '{$end_sql}'"
+        );
 
-            $start,
+        $confirmed = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN '{$start_sql}' AND '{$end_sql}' AND status = 'confirmed'"
+        );
 
-            $end
-
-        ));
-
-        $confirmed = (int) $wpdb->get_var($wpdb->prepare(
-
-            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN %s AND %s AND status = 'confirmed'",
-
-            $start,
-
-            $end
-
-        ));
-
-        $waitlist = (int) $wpdb->get_var($wpdb->prepare(
-
-            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN %s AND %s AND status = 'waitlist'",
-
-            $start,
-
-            $end
-
-        ));
+        $waitlist = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN '{$start_sql}' AND '{$end_sql}' AND status = 'waitlist'"
+        );
 
 
 
+        $cpt_slug = sanitize_key(Settings::get_cpt_slug());
         $events = (int) $wpdb->get_var($wpdb->prepare(
-
             "SELECT COUNT(*) FROM {$wpdb->posts} WHERE post_type = %s AND post_status = 'publish' AND post_date BETWEEN %s AND %s",
-
-            Settings::get_cpt_slug(),
-
+            $cpt_slug,
             $start,
-
             $end
-
         ));
-
-
 
         // Template mails sent (logged via event_hub_email_sent)
+        $template_mails = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_eh_email_log_time' AND meta_value BETWEEN '{$start_sql}' AND '{$end_sql}'"
+        );
 
-        $template_mails = (int) $wpdb->get_var($wpdb->prepare(
-
-            "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = '_eh_email_log_time' AND meta_value BETWEEN %s AND %s",
-
-            $start,
-
-            $end
-
-        ));
-
-
+        $no_show = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN '{$start_sql}' AND '{$end_sql}' AND status = 'no_show'"
+        );
+        $attended = (int) $wpdb->get_var(
+            "SELECT COUNT(*) FROM {$registrations_table} WHERE created_at BETWEEN '{$start_sql}' AND '{$end_sql}' AND status = 'attended'"
+        );
 
         // Top events by registrations in range
-
-        $top_rows = $wpdb->get_results($wpdb->prepare(
-
+        $top_rows = $wpdb->get_results(
             "SELECT session_id, 
-
                 SUM(CASE WHEN status = 'waitlist' THEN 1 ELSE 0 END) AS waitlist,
-
                 COUNT(*) AS regs
-
              FROM {$registrations_table}
-
-             WHERE created_at BETWEEN %s AND %s
-
+             WHERE created_at BETWEEN '{$start_sql}' AND '{$end_sql}'
              GROUP BY session_id
-
              ORDER BY regs DESC
-
              LIMIT 5",
+            ARRAY_A
+        ) ?: [];
 
-            $start,
-
-            $end
-
-        ), ARRAY_A) ?: [];
+        $by_month_rows = $wpdb->get_results(
+            "SELECT DATE_FORMAT(created_at, '%Y-%m') AS ym,
+                COUNT(*) AS total,
+                SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,
+                SUM(CASE WHEN status = 'no_show' THEN 1 ELSE 0 END) AS no_show,
+                SUM(CASE WHEN status = 'attended' THEN 1 ELSE 0 END) AS attended
+             FROM {$registrations_table}
+             WHERE created_at BETWEEN '{$start_sql}' AND '{$end_sql}'
+             GROUP BY ym
+             ORDER BY ym DESC
+             LIMIT 6",
+            ARRAY_A
+        ) ?: [];
 
 
 
@@ -837,20 +822,30 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
 
+        $by_month = [];
+        foreach ($by_month_rows as $row) {
+            $raw_label = $row['ym'] ?? '';
+            $label_fmt = $raw_label !== '' ? date_i18n('F Y', strtotime($raw_label . '-01')) : '';
+            $by_month[] = [
+                'label' => $label_fmt ?: $raw_label,
+                'total' => (int) ($row['total'] ?? 0),
+                'confirmed' => (int) ($row['confirmed'] ?? 0),
+                'no_show' => (int) ($row['no_show'] ?? 0),
+                'attended' => (int) ($row['attended'] ?? 0),
+            ];
+        }
+
+        $no_show_rate = ($attended + $no_show) > 0 ? round(($no_show / ($attended + $no_show)) * 100, 1) . '%' : '–';
+
         return [
-
             'registrations' => $regs,
-
             'confirmed' => $confirmed,
-
             'waitlist' => $waitlist,
-
             'events' => $events,
-
             'template_mails' => $template_mails,
-
             'top_events' => $top_events,
-
+            'by_month' => $by_month,
+            'no_show_rate' => $no_show_rate,
         ];
 
     }
@@ -943,6 +938,10 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         echo '<div class="wrap eh-admin">';
         echo '<h1>' . esc_html__('Event Hub - Logs', 'event-hub') . '</h1>';
+        if (isset($_GET['eh_logs_deleted'])) {
+            $msg = $_GET['eh_logs_deleted'] === 'all' ? __('Alle logs verwijderd.', 'event-hub') : __('Geselecteerde logs verwijderd.', 'event-hub');
+            echo '<div class="notice notice-success is-dismissible"><p>' . esc_html($msg) . '</p></div>';
+        }
         echo '<p class="description">' . esc_html__('Basislog van e-mail- en registratie-events (laatste 200).', 'event-hub') . '</p>';
 
         echo '<form method="get" action="' . esc_url(admin_url('admin.php')) . '" class="eh-filter-bar">';
@@ -964,32 +963,69 @@ private function collect_stats(int $start_ts, int $end_ts): array
         if (!$filtered) {
             echo '<div class="eh-card"><p>' . esc_html__('Geen logs beschikbaar.', 'event-hub') . '</p></div>';
         } else {
-            echo '<div class="eh-timeline">';
-            foreach ($filtered as $log) {
+            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+            echo '<input type="hidden" name="action" value="event_hub_delete_logs">';
+            wp_nonce_field('event_hub_delete_logs', 'event_hub_delete_logs_nonce');
+            echo '<div style="margin-bottom:10px; display:flex; gap:8px; align-items:center;">';
+            echo '<button type="submit" name="delete_selected" class="button button-secondary" onclick="return confirm(\'' . esc_js(__('Verwijder geselecteerde logs?', 'event-hub')) . '\');">' . esc_html__('Verwijder geselecteerde', 'event-hub') . '</button>';
+            echo '<button type="submit" name="delete_all" class="button button-secondary" onclick="return confirm(\'' . esc_js(__('Alle logs verwijderen?', 'event-hub')) . '\');">' . esc_html__('Verwijder alle', 'event-hub') . '</button>';
+            echo '</div>';
+            echo '<div class="eh-timeline" style="gap:12px;">';
+            foreach ($filtered as $key => $log) {
                 $ts = isset($log['ts']) ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), (int) $log['ts']) : '';
                 $type = $log['type'] ?? '';
                 $msg = $log['message'] ?? '';
                 $ctx = $log['context'] ?? [];
-                echo '<div class="eh-row-card">';
-                echo '<div class="eh-row-main" style="grid-template-columns:1fr;">';
-                echo '<div class="eh-row-title">' . esc_html($msg) . '</div>';
-                echo '<div class="eh-row-sub">' . esc_html($ts) . '</div>';
-                echo '<div class="eh-cal-badges">';
-                echo '<span class="eh-pill gray">' . esc_html($type ?: 'log') . '</span>';
-                echo '</div>';
+                echo '<div class="eh-row-card" style="padding:14px 16px;">';
+                echo '<div class="eh-row-main" style="grid-template-columns:24px 1fr 120px;align-items:start; gap:12px;">';
+                echo '<div style="padding-top:4px;"><input type="checkbox" name="log_keys[]" value="' . esc_attr((string) $key) . '" /></div>';
+                echo '<div>';
+                echo '<div class="eh-row-title" style="margin-bottom:4px;">' . esc_html($msg) . '</div>';
+                echo '<div class="eh-row-sub" style="margin-bottom:6px;">' . esc_html($ts) . '</div>';
                 if (is_array($ctx) && $ctx) {
-                    echo '<div class="eh-row-sub">';
+                    echo '<div class="eh-row-sub" style="display:flex;flex-wrap:wrap;gap:6px;">';
                     foreach ($ctx as $k => $v) {
-                        echo '<span class="eh-chip" style="padding:4px 8px;border-radius:8px;background:var(--eh-surface-subtle);border:1px solid var(--eh-border);">' . esc_html($k) . ': ' . esc_html((string) $v) . '</span> ';
+                        echo '<span class="eh-chip" style="padding:4px 8px;border-radius:8px;background:var(--eh-surface-subtle);border:1px solid var(--eh-border);">' . esc_html($k) . ': ' . esc_html((string) $v) . '</span>';
                     }
                     echo '</div>';
                 }
                 echo '</div>';
+                echo '<div class="eh-cal-badges" style="justify-content:flex-end;">';
+                echo '<span class="eh-pill gray">' . esc_html($type ?: 'log') . '</span>';
+                echo '</div>';
+                echo '</div>';
                 echo '</div>';
             }
             echo '</div>';
+            echo '</form>';
         }
         echo '</div>';
+    }
+
+    public function handle_delete_logs(): void
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Je hebt geen toegang.', 'event-hub'));
+        }
+        if (!isset($_POST['event_hub_delete_logs_nonce']) || !wp_verify_nonce(sanitize_text_field((string) $_POST['event_hub_delete_logs_nonce']), 'event_hub_delete_logs')) {
+            wp_die(__('Ongeldige aanvraag.', 'event-hub'));
+        }
+        $redirect = add_query_arg('page', 'event-hub-logs', admin_url('admin.php'));
+        if (isset($_POST['delete_all'])) {
+            if ($this->logger) {
+                $this->logger->clear();
+            }
+            wp_safe_redirect(add_query_arg('eh_logs_deleted', 'all', $redirect));
+            exit;
+        }
+        $keys = isset($_POST['log_keys']) && is_array($_POST['log_keys']) ? array_map('sanitize_text_field', (array) $_POST['log_keys']) : [];
+        if ($keys && $this->logger) {
+            $this->logger->delete($keys);
+            wp_safe_redirect(add_query_arg('eh_logs_deleted', 'some', $redirect));
+            exit;
+        }
+        wp_safe_redirect($redirect);
+        exit;
     }
 
 

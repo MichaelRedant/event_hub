@@ -532,6 +532,100 @@
     margin: .35em 0 0;
 }
 
+.eh-session-meta .eh-linked-event-results {
+    margin-top: 6px;
+    border: 1px solid var(--eh-border);
+    border-radius: 10px;
+    background: var(--eh-surface);
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.eh-session-meta .eh-linked-event-result {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 10px;
+    border: 0;
+    border-bottom: 1px solid var(--eh-border);
+    background: transparent;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--eh-text);
+}
+
+.eh-session-meta .eh-linked-event-result:last-child {
+    border-bottom: 0;
+}
+
+.eh-session-meta .eh-linked-event-result:hover {
+    background: var(--eh-surface-subtle);
+}
+
+.eh-session-meta .eh-linked-event-selected {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: var(--eh-surface);
+    border: 1px solid var(--eh-border);
+    border-radius: 12px;
+    font-size: 13px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.eh-session-meta .eh-linked-event-meta {
+    color: var(--eh-text-muted);
+    font-size: 12px;
+}
+
+.eh-session-meta .eh-linked-event-empty {
+    color: var(--eh-text-muted);
+    font-style: italic;
+}
+
+.eh-session-meta .eh-linked-event-warn {
+    color: #b91c1c;
+    font-weight: 600;
+}
+
+.eh-session-meta #eh-linked-event-clear {
+    margin-top: 8px;
+    width: max-content;
+}
+
+.eh-session-meta .eh-linked-event-action {
+    margin-top: 8px;
+}
+
+.eh-session-meta .eh-linked-event-select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #cbd5f5;
+    border-radius: 10px;
+    background: var(--eh-surface-subtle);
+    margin-top: 6px;
+}
+
+.eh-session-meta .eh-linked-event-confirm {
+    margin-top: 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px dashed var(--eh-border);
+    background: var(--eh-surface-subtle);
+    font-size: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+}
+
+.eh-session-meta .eh-linked-event-ok {
+    color: #15803d;
+    font-weight: 600;
+}
+
 .eh-email-card {
     background: var(--eh-surface-subtle);
     border: 1px solid var(--eh-border);

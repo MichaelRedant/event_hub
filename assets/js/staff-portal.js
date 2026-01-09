@@ -6,6 +6,7 @@
 
   function initPortal(root){
     const restUrl = root.dataset.rest || '';
+    const viewsUrl = root.dataset.views || '';
     const nonce = root.dataset.nonce || '';
     const events = parseJson(root.dataset.events, []);
     const fieldLabels = parseJson(root.dataset.fields, {});
@@ -16,9 +17,16 @@
     const fieldWrap = root.querySelector('.eh-sp-field-list');
     const btnCsv = root.querySelector('.eh-sp-export-csv');
     const btnHtml = root.querySelector('.eh-sp-export-html');
+    const viewSelect = root.querySelector('.eh-sp-view-select');
+    const viewApply = root.querySelector('.eh-sp-view-apply');
+    const viewDelete = root.querySelector('.eh-sp-view-delete');
+    const viewName = root.querySelector('.eh-sp-view-name');
+    const viewSave = root.querySelector('.eh-sp-view-save-btn');
 
     let currentData = [];
     let currentFields = Object.keys(fieldLabels);
+    let currentEventId = '';
+    let savedViews = {};
 
     if (!restUrl || !eventSelect || !fieldWrap || !tableHead || !tableBody) {
       return;
@@ -182,11 +190,17 @@
     }
 
     eventSelect.addEventListener('change', (e) => {
-      fetchRegistrations(e.target.value);
+      currentEventId = e.target.value;
+      fetchRegistrations(currentEventId);
     });
 
     fieldWrap.addEventListener('change', () => {
-      renderTable(getSelectedFields(), currentData);
+      currentFields = getSelectedFields();
+      if (currentEventId) {
+        fetchRegistrations(currentEventId);
+      } else {
+        renderTable(currentFields, currentData);
+      }
     });
 
     if (btnCsv){
@@ -204,13 +218,111 @@
       });
     }
 
+    function renderViewsSelect(){
+      if (!viewSelect) return;
+      viewSelect.innerHTML = '<option value=\"\">Kies een view</option>';
+      Object.keys(savedViews).forEach((name) => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        viewSelect.appendChild(opt);
+      });
+    }
+
+    function fetchViews(){
+      if (!viewsUrl || !viewSelect) return;
+      fetch(viewsUrl, {
+        credentials: 'same-origin',
+        headers: {'X-WP-Nonce': nonce}
+      }).then(res => res.json()).then(res => {
+        if (res.success && res.views){
+          savedViews = res.views;
+          renderViewsSelect();
+        }
+      }).catch(() => {});
+    }
+
+    function applyView(name){
+      if (!name || !savedViews[name]) return;
+      const fields = savedViews[name];
+      fieldWrap.querySelectorAll('input[type=\"checkbox\"]').forEach(cb => {
+        cb.checked = fields.includes(cb.value);
+      });
+      currentFields = fields;
+      if (currentEventId){
+        fetchRegistrations(currentEventId);
+      } else {
+        renderTable(fields, currentData);
+      }
+    }
+
+    if (viewApply && viewSelect){
+      viewApply.addEventListener('click', (e) => {
+        e.preventDefault();
+        applyView(viewSelect.value);
+      });
+    }
+
+    if (viewDelete && viewSelect){
+      viewDelete.addEventListener('click', (e) => {
+        e.preventDefault();
+        const name = viewSelect.value;
+        if (!name || !viewsUrl) return;
+        fetch(viewsUrl + '?name=' + encodeURIComponent(name), {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: {'X-WP-Nonce': nonce}
+        }).then(res => res.json()).then(res => {
+          if (res.success && res.views){
+            savedViews = res.views;
+            renderViewsSelect();
+            setStatus('View verwijderd.', false);
+          } else {
+            setStatus(res.message || 'Verwijderen mislukt.', true);
+          }
+        }).catch(() => setStatus('Verwijderen mislukt.', true));
+      });
+    }
+
+    if (viewSave){
+      viewSave.addEventListener('click', (e) => {
+        e.preventDefault();
+        if (!viewsUrl) return;
+        const name = viewName ? viewName.value.trim() : '';
+        if (!name){ setStatus('Naam voor view ontbreekt.', true); return; }
+        const payload = {name: name, fields: getSelectedFields()};
+        fetch(viewsUrl, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': nonce
+          },
+          body: JSON.stringify(payload)
+        }).then(res => res.json()).then(res => {
+          if (res.success && res.views){
+            savedViews = res.views;
+            renderViewsSelect();
+            if (viewSelect) viewSelect.value = name;
+            setStatus('View opgeslagen.', false);
+          } else {
+            setStatus(res.message || 'Opslaan mislukt.', true);
+          }
+        }).catch(() => setStatus('Opslaan mislukt.', true));
+      });
+    }
+
     // Auto-load first event if available
     if (eventSelect.value){
+      currentEventId = eventSelect.value;
       fetchRegistrations(eventSelect.value);
     } else if (events[0]) {
       eventSelect.value = events[0].id;
+      currentEventId = events[0].id;
       fetchRegistrations(events[0].id);
     }
+
+    fetchViews();
   }
 
   function parseJson(str, fallback){

@@ -25,8 +25,10 @@ class Settings
             ['from_name', __('Afzendernaam', 'event-hub'), 'text'],
             ['from_email', __('Afzender e-mail', 'event-hub'), 'email'],
             ['mail_transport', __('Mailtransport', 'event-hub'), 'select'],
+            ['confirmation_timing_mode', __('Bevestiging timing', 'event-hub'), 'timing'],
             ['reminder_offset_hours', __('Herinnering (uren voor start)', 'event-hub'), 'number'],
             ['followup_offset_hours', __('Nadien (uren na einde)', 'event-hub'), 'number'],
+            ['waitlist_timing_mode', __('Wachtlijst timing', 'event-hub'), 'timing'],
             ['cancel_cutoff_hours', __('Annuleren via link tot (uren voor start)', 'event-hub'), 'number'],
             ['custom_placeholders_raw', __('Eigen placeholders', 'event-hub'), 'textarea'],
         ];
@@ -38,9 +40,27 @@ class Settings
                 $name = self::OPTION . "[{$key}]";
                 if ($type === 'textarea') {
                     echo '<textarea class="large-text code" rows="6" name="' . esc_attr($name) . '">' . esc_textarea((string) $val) . '</textarea>';
-                    echo '<p class="description">' . esc_html__('ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒÆ’Ã‚Â«ÃƒÂ¢Ã¢â‚¬ÂÃ…â€œÃƒâ€šÃ‚Â®n placeholder per lijn, formaat: mijn_token=Mijn waarde. Gebruik accolades { } om de tokennaam te markeren.', 'event-hub') . '</p>';
+                    echo '<p class="description">' . esc_html__('Eén placeholder per lijn, formaat: mijn_token=Mijn waarde. Gebruik accolades { } om de tokennaam te markeren.', 'event-hub') . '</p>';
                 } elseif ($type === 'number') {
                     echo '<input type="number" min="0" name="' . esc_attr($name) . '" value="' . esc_attr((string) $val) . '" />';
+                } elseif ($type === 'timing') {
+                    $hours_key = str_replace('_mode', '_hours', $key);
+                    $hours_val = $opts[$hours_key] ?? 24;
+                    $options = [
+                        'immediate' => __('Onmiddellijk', 'event-hub'),
+                        'before_start' => __('X uren voor start', 'event-hub'),
+                        'after_end' => __('X uren na einde/start', 'event-hub'),
+                    ];
+                    echo '<select name="' . esc_attr($name) . '">';
+                    foreach ($options as $opt_val => $opt_label) {
+                        echo '<option value="' . esc_attr($opt_val) . '"' . selected($val ?: 'immediate', $opt_val, false) . '>' . esc_html($opt_label) . '</option>';
+                    }
+                    echo '</select>';
+                    echo '<div style="margin-top:6px;">';
+                    echo '<label style="display:block;margin-bottom:4px;font-weight:600;">' . esc_html__('Aantal uren', 'event-hub') . '</label>';
+                    echo '<input type="number" min="0" name="' . esc_attr(self::OPTION . "[{$hours_key}]") . '" value="' . esc_attr((string) $hours_val) . '" />';
+                    echo '</div>';
+                    echo '<p class="description">' . esc_html__('Kies wanneer de mail vertrekt. Bij “voor start” of “na einde” gebruiken we het aantal uren hiernaast. Leeg laten? We nemen de standaard (24u).', 'event-hub') . '</p>';
                 } elseif ($type === 'select' && $key === 'mail_transport') {
                     $options = [
                         'php' => __('PHP mail (standaard)', 'event-hub'),
@@ -203,8 +223,8 @@ class Settings
             $code = $opts['single_custom_code'] ?? '';
             $name = self::OPTION_GENERAL . '[single_custom_code]';
             $placeholders = \EventHub\Emails::get_placeholder_reference();
-            echo '<div style="display:flex;gap:20px;align-items:flex-start;">';
-            echo '<div style="flex:1 1 55%;">';
+            echo '<div style="display:flex;gap:20px;align-items:flex-start;position:relative;padding-right:680px;">';
+            echo '<div style="flex:1 1 100%;">';
             echo '<textarea class="large-text code" rows="18" name="' . esc_attr($name) . '" id="eh-custom-code" placeholder="<!-- HTML -->&#10;<style>/* CSS */</style>&#10;<script>// JS</script>">' . esc_textarea((string) $code) . '</textarea>';
             echo '<p class="description">' . esc_html__('Gebruik placeholders voor dynamische data. Dubbele accolades ({{title}}) of dezelfde tokens als in e-mailtemplates (bijv. {event_title}, {event_date}, {event_location}, {cta_link}). Inline <style>/<script> is toegestaan.', 'event-hub') . '</p>';
             echo '<details style="margin-top:10px;"><summary style="cursor:pointer;font-weight:600;">' . esc_html__('Beschikbare placeholders', 'event-hub') . '</summary>';
@@ -234,14 +254,19 @@ class Settings
             }
             echo '</ul></details>';
             echo '</div>';
-            echo '<div style="flex:1 1 45%; position:sticky; top:80px;">';
-            echo '<div style="border:1px solid #e5e7eb;border-radius:12px;background:#f8fafc;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,.08);">';
-            echo '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#fff;"><strong style="font-size:13px;color:#0f172a;">Live preview</strong><span style="font-size:12px;color:#64748b;">2026 view</span></div>';
-            echo '<div id="eh-code-preview" style="min-height:240px;padding:14px;background:#fff;"></div>';
+            echo '<div class="eh-general-preview" style="position:fixed; top:96px; right:10px; width:620px; max-width:70vw; z-index:10;">';
+            echo '<div style="border:1px solid #e5e7eb;border-radius:12px;background:#f8fafc;overflow:hidden;box-shadow:0 10px 30px rgba(15,23,42,.12);">';
+            echo '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #e5e7eb;background:#fff;">';
+            echo '<strong style="font-size:13px;color:#0f172a;">Live preview</strong>';
+            echo '<button type="button" id="eh-preview-toggle" style="border:1px solid #e5e7eb;background:#f8fafc;color:#0f172a;padding:4px 8px;border-radius:8px;font-size:12px;cursor:pointer;">' . esc_html__('Inklappen', 'event-hub') . '</button>';
+            echo '</div>';
+            echo '<div id="eh-code-preview" style="min-height:120px;max-height:280px;overflow:auto;padding:14px;background:#fff;"></div>';
             echo '</div>';
             echo '</div>';
             echo '</div>';
-            echo '<script>(function(){const field=document.getElementById("eh-custom-code");const preview=document.getElementById("eh-code-preview");function execScripts(root){root.querySelectorAll("script").forEach(function(old){const neu=document.createElement("script"); if(old.src){neu.src=old.src;} else {neu.textContent=old.textContent;} old.replaceWith(neu);});}function render(){if(!field||!preview) return; preview.innerHTML=field.value||""; execScripts(preview);} if(field){field.addEventListener("input", render);} render();})();</script>';
+            $lbl_collapse = esc_js(__('Inklappen', 'event-hub'));
+            $lbl_expand   = esc_js(__('Uitklappen', 'event-hub'));
+            echo '<script>(function(){const field=document.getElementById("eh-custom-code");const preview=document.getElementById("eh-code-preview");const toggle=document.getElementById("eh-preview-toggle");let collapsed=false;function execScripts(root){root.querySelectorAll("script").forEach(function(old){const neu=document.createElement("script"); if(old.src){neu.src=old.src;} else {neu.textContent=old.textContent;} old.replaceWith(neu);});}function render(){if(!field||!preview) return; preview.innerHTML=field.value||""; execScripts(preview);} if(field){field.addEventListener("input", render);} render(); if(toggle && preview){toggle.addEventListener("click", function(){collapsed=!collapsed; preview.style.display = collapsed ? "none" : "block"; toggle.textContent = collapsed ? "' . $lbl_expand . '" : "' . $lbl_collapse . '";});}})();</script>';
         }, self::OPTION_GENERAL, 'eh_general_main');
 
         add_settings_field('enable_recaptcha', __('reCAPTCHA beveiligen', 'event-hub'), function () {
@@ -462,11 +487,32 @@ class Settings
         if (!current_user_can('manage_options')) {
             wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
         }
-        echo '<div class="wrap">';
+        echo '<div class="wrap eh-admin">';
         echo '<h1>' . esc_html__('Event Hub - Algemeen', 'event-hub') . '</h1>';
-        echo '<form method="post" action="options.php">';
+        echo '<p style="max-width:720px;color:#475569;margin:6px 0 16px;">' . esc_html__('Kies welk CPT en welke taxonomie Event Hub gebruikt. Gebruik je een bestaande CPT? Dan laten we die ongemoeid bij deïnstallatie.', 'event-hub') . '</p>';
+        echo '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:18px 20px;max-width:980px;">';
+        echo '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px;">';
+        echo '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:14px;">';
+        echo '<h3 style="margin-top:0;">' . esc_html__('Snel overzicht', 'event-hub') . '</h3>';
+        echo '<ul style="margin:0; padding-left:18px; color:#475569; line-height:1.5;">';
+        echo '<li>' . esc_html__('Externe CPT? Vink aan en kies de slug.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Labels en icoon bepalen hoe het menu eruitziet.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Taxonomie: koppel bestaande of laat Event Hub er een maken.', 'event-hub') . '</li>';
+        echo '</ul>';
+        echo '</div>';
+        echo '<div style="background:#ecfeff;border:1px solid #bae6fd;border-radius:12px;padding:14px;">';
+        echo '<h3 style="margin-top:0;">' . esc_html__('Veiligheid bij verwijderen', 'event-hub') . '</h3>';
+        echo '<p style="margin:0;color:#0f172a;">' . esc_html__('We verwijderen enkel de Event Hub CPT bij deïnstallatie als je geen externe CPT gebruikt. Externe CPT-data blijft altijd staan.', 'event-hub') . '</p>';
+        echo '</div>';
+        echo '</div>'; // grid
+        echo '<form method="post" action="options.php" style="margin-top:0;">';
         settings_fields(self::OPTION_GENERAL);
+        echo '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px;">';
+        echo '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">';
+        echo '<h3 style="margin-top:0;">' . esc_html__('CPT & Menu', 'event-hub') . '</h3>';
         do_settings_sections(self::OPTION_GENERAL);
+        echo '</div>';
+        echo '</div>';
         submit_button(__('Wijzigingen opslaan', 'event-hub'));
         echo '</form>';
         echo '</div>';
@@ -479,6 +525,14 @@ class Settings
         $out['from_email'] = isset($input['from_email']) ? sanitize_email((string) $input['from_email']) : '';
         $transport = $input['mail_transport'] ?? 'php';
         $out['mail_transport'] = in_array($transport, ['php', 'smtp_plugin'], true) ? $transport : 'php';
+        $allowed_timing = ['immediate','before_start','after_end'];
+        $conf_mode = $input['confirmation_timing_mode'] ?? 'immediate';
+        $out['confirmation_timing_mode'] = in_array($conf_mode, $allowed_timing, true) ? $conf_mode : 'immediate';
+        if (isset($input['confirmation_timing_hours']) && $input['confirmation_timing_hours'] !== '') {
+            $out['confirmation_timing_hours'] = max(0, (int) $input['confirmation_timing_hours']);
+        } else {
+            $out['confirmation_timing_hours'] = 24;
+        }
         // Reminder in uren, met fallback vanaf legacy dagenveld.
         if (isset($input['reminder_offset_hours']) && $input['reminder_offset_hours'] !== '') {
             $out['reminder_offset_hours'] = max(0, (int) $input['reminder_offset_hours']);
@@ -489,6 +543,13 @@ class Settings
         }
         $out['cancel_cutoff_hours'] = isset($input['cancel_cutoff_hours']) ? max(0, (int) $input['cancel_cutoff_hours']) : 24;
         $out['followup_offset_hours'] = isset($input['followup_offset_hours']) ? max(0, (int) $input['followup_offset_hours']) : 24;
+        $wait_mode = $input['waitlist_timing_mode'] ?? 'immediate';
+        $out['waitlist_timing_mode'] = in_array($wait_mode, $allowed_timing, true) ? $wait_mode : 'immediate';
+        if (isset($input['waitlist_timing_hours']) && $input['waitlist_timing_hours'] !== '') {
+            $out['waitlist_timing_hours'] = max(0, (int) $input['waitlist_timing_hours']);
+        } else {
+            $out['waitlist_timing_hours'] = 24;
+        }
         if (isset($input['custom_placeholders_raw'])) {
             $raw = (string) $input['custom_placeholders_raw'];
             $out['custom_placeholders_raw'] = wp_kses_post($raw);
@@ -501,7 +562,13 @@ class Settings
     {
         $out = [];
         $out['use_external_cpt'] = !empty($input['use_external_cpt']) ? 1 : 0;
-        $out['cpt_slug'] = isset($input['cpt_slug']) ? sanitize_key((string) $input['cpt_slug']) : 'eh_session';
+        $requested_cpt = isset($input['cpt_slug']) ? sanitize_key((string) $input['cpt_slug']) : 'eh_session';
+        if ($out['use_external_cpt']) {
+            $resolved = self::resolve_post_type_slug($requested_cpt);
+            $out['cpt_slug'] = $resolved ?: 'eh_session';
+        } else {
+            $out['cpt_slug'] = $requested_cpt ?: 'eh_session';
+        }
         $out['tax_slug'] = isset($input['tax_slug']) ? sanitize_key((string) $input['tax_slug']) : 'eh_session_type';
         $out['cpt_menu_label'] = isset($input['cpt_menu_label']) ? sanitize_text_field((string) $input['cpt_menu_label']) : 'Evenementen';
         $out['cpt_singular_label'] = isset($input['cpt_singular_label']) ? sanitize_text_field((string) $input['cpt_singular_label']) : 'Evenement';
@@ -593,6 +660,27 @@ class Settings
     {
         $g = self::get_general();
         return sanitize_key((string) ($g['cpt_slug'] ?? 'eh_session'));
+    }
+
+    public static function resolve_post_type_slug(string $slug): string
+    {
+        $slug = sanitize_key($slug);
+        if ($slug === '') {
+            return '';
+        }
+        if (post_type_exists($slug)) {
+            return $slug;
+        }
+        $post_types = get_post_types([], 'objects');
+        foreach ($post_types as $pt) {
+            if (!empty($pt->rewrite['slug']) && $pt->rewrite['slug'] === $slug) {
+                return $pt->name;
+            }
+            if (is_string($pt->has_archive) && $pt->has_archive === $slug) {
+                return $pt->name;
+            }
+        }
+        return $slug;
     }
 
     public static function get_tax_slug(): string
