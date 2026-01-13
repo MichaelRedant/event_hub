@@ -1093,12 +1093,13 @@ private function collect_stats(int $start_ts, int $end_ts): array
         if (isset($_GET['download']) && $_GET['download'] === 'csv') {
 
             $session_id = isset($_GET['session_id']) ? (int) $_GET['session_id'] : 0;
+            $occurrence_id = isset($_GET['occurrence_id']) ? (int) $_GET['occurrence_id'] : 0;
 
             $status = isset($_GET['status']) ? sanitize_text_field((string) $_GET['status']) : '';
 
             $name = isset($_GET['name']) ? sanitize_text_field((string) $_GET['name']) : '';
 
-            $this->export_registrations_csv($session_id, $status, $name);
+            $this->export_registrations_csv($session_id, $status, $name, $occurrence_id);
 
             return;
 
@@ -1107,12 +1108,13 @@ private function collect_stats(int $start_ts, int $end_ts): array
         if (isset($_GET['download']) && $_GET['download'] === 'html') {
 
             $session_id = isset($_GET['session_id']) ? (int) $_GET['session_id'] : 0;
+            $occurrence_id = isset($_GET['occurrence_id']) ? (int) $_GET['occurrence_id'] : 0;
 
             $status = isset($_GET['status']) ? sanitize_text_field((string) $_GET['status']) : '';
 
             $name = isset($_GET['name']) ? sanitize_text_field((string) $_GET['name']) : '';
 
-            $this->render_printable_registrations($session_id, $status, $name);
+            $this->render_printable_registrations($session_id, $status, $name, $occurrence_id);
 
             return;
 
@@ -1156,6 +1158,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         $session_id = isset($_GET['session_id']) ? (int) $_GET['session_id'] : 0;
 
+        $occurrence_id = isset($_GET['occurrence_id']) ? (int) $_GET['occurrence_id'] : 0;
+
         $status     = isset($_GET['status']) ? sanitize_text_field((string) $_GET['status']) : '';
 
         $name       = isset($_GET['name']) ? sanitize_text_field((string) $_GET['name']) : '';
@@ -1174,6 +1178,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         ]);
 
+        $occurrences = $session_id > 0 ? $this->registrations->get_occurrences($session_id) : [];
+
 
 
         echo '<div class="wrap eh-admin">';
@@ -1187,6 +1193,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 'action' => 'new',
 
                 'session_id' => $session_id ?: '',
+
+                'occurrence_id' => $occurrence_id ?: '',
 
             ],
 
@@ -1222,11 +1230,50 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         echo '</select>';
 
+        if ($occurrences) {
+            echo '<select name="occurrence_id">';
+            echo '<option value="0">' . esc_html__('Alle datums', 'event-hub') . '</option>';
+            foreach ($occurrences as $occ) {
+                $occ_id = (int) ($occ['id'] ?? 0);
+                if ($occ_id <= 0) {
+                    continue;
+                }
+                $start = $occ['date_start'] ?? '';
+                $label = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : ('#' . $occ_id);
+                echo '<option value="' . esc_attr((string) $occ_id) . '"' . selected($occurrence_id, $occ_id, false) . '>' . esc_html($label) . '</option>';
+            }
+            echo '</select>';
+        }
+
         echo '<select name="status">';
 
         echo '<option value="">' . esc_html__('Alle statussen', 'event-hub') . '</option>';
 
         $statuses = $this->get_status_labels();
+
+        $occurrence_map = [];
+        foreach ($sessions as $session) {
+            $occurrences = $this->registrations->get_occurrences($session->ID);
+            if (!$occurrences) {
+                continue;
+            }
+            $items = [];
+            foreach ($occurrences as $occ) {
+                $occ_id = (int) ($occ['id'] ?? 0);
+                if ($occ_id <= 0) {
+                    continue;
+                }
+                $start = $occ['date_start'] ?? '';
+                $label = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : ('#' . $occ_id);
+                $items[] = [
+                    'id' => $occ_id,
+                    'label' => $label,
+                ];
+            }
+            if ($items) {
+                $occurrence_map[$session->ID] = $items;
+            }
+        }
 
         foreach ($statuses as $key => $label) {
 
@@ -1248,7 +1295,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
 
-        $registrations = $this->fetch_registrations($session_id, $status, $name);
+        $registrations = $this->fetch_registrations($session_id, $status, $name, $occurrence_id);
 
 
 
@@ -1291,6 +1338,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 $session_id = (int) $row['session_id'];
 
                 $session    = get_post($session_id);
+                $occurrence_label = $this->format_occurrence_label($session_id, (int) ($row['occurrence_id'] ?? 0));
 
                 $edit_url   = add_query_arg(
 
@@ -1361,6 +1409,9 @@ private function collect_stats(int $start_ts, int $end_ts): array
                     echo '<div class="eh-row-title">' . esc_html__('Onbekend event', 'event-hub') . '</div>';
 
                 }
+                if ($occurrence_label) {
+                    echo '<div class="eh-row-sub">' . esc_html($occurrence_label) . '</div>';
+                }
 
                 echo '<div class="eh-row-sub">' . esc_html(trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''))) . '</div>';
 
@@ -1412,13 +1463,13 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
 
-    private function fetch_registrations(int $session_id, string $status, string $name = ''): array
+    private function fetch_registrations(int $session_id, string $status, string $name = '', int $occurrence_id = 0): array
 
     {
 
         if ($session_id > 0) {
 
-            $registrations = $this->registrations->get_registrations_by_session($session_id);
+            $registrations = $this->registrations->get_registrations_by_session($session_id, $occurrence_id);
 
         } else {
 
@@ -1751,6 +1802,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
         $preselect = isset($_GET['session_id']) ? (int) $_GET['session_id'] : 0;
+        $preselect_occurrence = isset($_GET['occurrence_id']) ? (int) $_GET['occurrence_id'] : 0;
 
         $statuses = $this->get_status_labels();
 
@@ -1769,6 +1821,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
             $payload = [
 
                 'session_id' => isset($_POST['session_id']) ? (int) $_POST['session_id'] : 0,
+
+                'occurrence_id' => isset($_POST['occurrence_id']) ? (int) $_POST['occurrence_id'] : 0,
 
                 'first_name' => sanitize_text_field($_POST['first_name'] ?? ''),
 
@@ -1811,6 +1865,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
                             'page' => 'event-hub-registrations',
 
                             'session_id' => $payload['session_id'],
+
+                            'occurrence_id' => $payload['occurrence_id'] ?: '',
 
                             'eh_notice' => 'reg_created',
 
@@ -1859,6 +1915,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
         $current_session = isset($_POST['session_id']) ? (int) $_POST['session_id'] : $preselect;
+        $current_occurrence = isset($_POST['occurrence_id']) ? (int) $_POST['occurrence_id'] : $preselect_occurrence;
 
 
 
@@ -1882,6 +1939,10 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         echo '</div>';
 
+        echo '<div class="field" id="eh-occurrence-field" style="display:none;">';
+        echo '<label for="occurrence_id">' . esc_html__('Datum', 'event-hub') . '</label>';
+        echo '<select id="occurrence_id" name="occurrence_id"></select>';
+        echo '</div>';
 
 
         $this->render_new_registration_input('first_name', __('Voornaam', 'event-hub'), true);
@@ -1939,6 +2000,9 @@ private function collect_stats(int $start_ts, int $end_ts): array
         submit_button(__('Inschrijving opslaan', 'event-hub'));
 
         echo '</form>';
+
+        $occurrence_json = wp_json_encode($occurrence_map);
+        echo '<script>document.addEventListener("DOMContentLoaded",function(){var sessionSelect=document.getElementById("session_id");var field=document.getElementById("eh-occurrence-field");var occurrenceSelect=document.getElementById("occurrence_id");if(!sessionSelect||!field||!occurrenceSelect){return;}var map=' . $occurrence_json . ';var current=' . (int) $current_occurrence . ';function render(){var sessionId=parseInt(sessionSelect.value||"0",10);var items=map[sessionId]||[];occurrenceSelect.innerHTML="";if(!items.length){field.style.display="none";occurrenceSelect.required=false;return;}field.style.display="";occurrenceSelect.required=true;var placeholder=document.createElement("option");placeholder.value="";placeholder.textContent="' . esc_js(__('Selecteer datum', 'event-hub')) . '";occurrenceSelect.appendChild(placeholder);items.forEach(function(item){var opt=document.createElement("option");opt.value=String(item.id);opt.textContent=item.label;if(current&&item.id===current){opt.selected=true;}occurrenceSelect.appendChild(opt);});if(!occurrenceSelect.value&&items.length===1){occurrenceSelect.value=String(items[0].id);} }sessionSelect.addEventListener("change",function(){current=0;render();});render();});</script>';
 
         echo '</div>';
 
@@ -2073,117 +2137,127 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
     public function ajax_calendar_events(): void
-
     {
-
         check_ajax_referer('event_hub_calendar');
-
         if (!current_user_can('edit_posts')) {
-
             wp_send_json_error(['message' => __('Geen toegang.', 'event-hub')], 403);
-
         }
-
-
 
         $start = isset($_GET['start']) ? strtotime(sanitize_text_field((string) $_GET['start'])) : false;
-
         $end   = isset($_GET['end']) ? strtotime(sanitize_text_field((string) $_GET['end'])) : false;
 
-
-
         $args = [
-
             'post_type'      => Settings::get_cpt_slug(),
-
             'post_status'    => 'publish',
-
             'posts_per_page' => -1,
-
         ];
 
-
-
-        if ($start && $end) {
-
-            $args['meta_query'] = [[
-
-                'key'     => '_eh_date_start',
-
-                'value'   => [gmdate('Y-m-d H:i:s', $start), gmdate('Y-m-d H:i:s', $end)],
-
-                'compare' => 'BETWEEN',
-
-                'type'    => 'DATETIME',
-
-            ]];
-
-        }
-
-
-
         $posts = get_posts($args);
-
         $events = [];
-
         foreach ($posts as $post) {
-
-            $date_start = get_post_meta($post->ID, '_eh_date_start', true);
-
-            if (!$date_start) {
-
-                continue;
-
-            }
-
-            $date_end = get_post_meta($post->ID, '_eh_date_end', true);
-
             $color = sanitize_hex_color((string) get_post_meta($post->ID, '_eh_color', true)) ?: '#2271b1';
-
-            $status = get_post_meta($post->ID, '_eh_status', true) ?: 'open';
-
-            $capacity = (int) get_post_meta($post->ID, '_eh_capacity', true);
-            $booked = $this->registrations->count_booked((int) $post->ID);
-            $available = ($capacity > 0) ? max(0, $capacity - $booked) : null;
-            $occupancy = ($capacity > 0) ? min(100, (int) round(($booked / max(1, $capacity)) * 100)) : null;
+            $status_meta = get_post_meta($post->ID, '_eh_status', true) ?: 'open';
             $location = get_post_meta($post->ID, '_eh_location', true);
             $is_online = (bool) get_post_meta($post->ID, '_eh_is_online', true);
             $term_list = wp_get_post_terms($post->ID, Settings::get_tax_slug(), ['fields' => 'names']);
 
+            $occurrences = $this->registrations->get_occurrences($post->ID);
+            if ($occurrences) {
+                foreach ($occurrences as $occ) {
+                    $occ_id = (int) ($occ['id'] ?? 0);
+                    if ($occ_id <= 0) {
+                        continue;
+                    }
+                    $date_start = $occ['date_start'] ?? '';
+                    if (!$date_start) {
+                        continue;
+                    }
+                    $start_ts = strtotime($date_start);
+                    if ($start_ts && $start && $end && ($start_ts < $start || $start_ts > $end)) {
+                        continue;
+                    }
+                    $date_end = $occ['date_end'] ?? '';
+                    $state = $this->registrations->get_capacity_state((int) $post->ID, $occ_id);
+                    $status = $status_meta;
+                    if (!in_array($status, ['cancelled', 'closed'], true) && $state['is_full']) {
+                        $status = 'full';
+                    }
+                    $capacity = $state['capacity'];
+                    $booked = $state['booked'];
+                    $available = ($capacity > 0) ? max(0, $capacity - $booked) : null;
+                    $occupancy = ($capacity > 0) ? min(100, (int) round(($booked / max(1, $capacity)) * 100)) : null;
+
+                    $events[] = [
+                        'id' => $post->ID . '-' . $occ_id,
+                        'title' => $post->post_title,
+                        'start' => date('c', $start_ts),
+                        'end' => $date_end ? date('c', strtotime($date_end)) : null,
+                        'url' => add_query_arg(
+                            [
+                                'page' => 'event-hub-event',
+                                'event_id' => $post->ID,
+                                'occurrence_id' => $occ_id,
+                            ],
+                            admin_url('admin.php')
+                        ),
+                        'backgroundColor' => $color,
+                        'borderColor' => $color,
+                        'classNames' => ['eh-status-' . sanitize_html_class($status)],
+                        'extendedProps' => [
+                            'status' => $status,
+                            'event_id' => (int) $post->ID,
+                            'occurrence_id' => $occ_id,
+                            'location' => $location,
+                            'is_online' => $is_online,
+                            'capacity' => $capacity,
+                            'booked' => $booked,
+                            'available' => $available,
+                            'occupancy' => $occupancy,
+                            'terms' => $term_list,
+                        ],
+                    ];
+                }
+                continue;
+            }
+
+            $date_start = get_post_meta($post->ID, '_eh_date_start', true);
+            if (!$date_start) {
+                continue;
+            }
+            $start_ts = strtotime($date_start);
+            if ($start_ts && $start && $end && ($start_ts < $start || $start_ts > $end)) {
+                continue;
+            }
+            $date_end = get_post_meta($post->ID, '_eh_date_end', true);
+            $state = $this->registrations->get_capacity_state((int) $post->ID);
+            $status = $status_meta;
+            if (!in_array($status, ['cancelled', 'closed'], true) && $state['is_full']) {
+                $status = 'full';
+            }
+            $capacity = $state['capacity'];
+            $booked = $state['booked'];
+            $available = ($capacity > 0) ? max(0, $capacity - $booked) : null;
+            $occupancy = ($capacity > 0) ? min(100, (int) round(($booked / max(1, $capacity)) * 100)) : null;
+
             $events[] = [
-
                 'id' => $post->ID,
-
                 'title' => $post->post_title,
-
-                'start' => date('c', strtotime($date_start)),
-
+                'start' => date('c', $start_ts),
                 'end' => $date_end ? date('c', strtotime($date_end)) : null,
-
                 'url' => add_query_arg(
-
                     [
-
                         'page' => 'event-hub-event',
-
                         'event_id' => $post->ID,
-
                     ],
-
                     admin_url('admin.php')
-
                 ),
-
                 'backgroundColor' => $color,
-
                 'borderColor' => $color,
-
                 'classNames' => ['eh-status-' . sanitize_html_class($status)],
-
                 'extendedProps' => [
-
                     'status' => $status,
-
+                    'event_id' => (int) $post->ID,
+                    'occurrence_id' => 0,
                     'location' => $location,
                     'is_online' => $is_online,
                     'capacity' => $capacity,
@@ -2191,18 +2265,13 @@ private function collect_stats(int $start_ts, int $end_ts): array
                     'available' => $available,
                     'occupancy' => $occupancy,
                     'terms' => $term_list,
-
                 ],
-
             ];
-
         }
 
-
-
         wp_send_json_success($events);
-
     }
+
 
     /**
      * Publieke variant voor frontend kalenderblokken (geen login nodig).
@@ -2225,27 +2294,55 @@ private function collect_stats(int $start_ts, int $end_ts): array
             'post_type'      => Settings::get_cpt_slug(),
             'post_status'    => 'publish',
             'posts_per_page' => -1,
-            'meta_query'     => [[
-                'key'     => '_eh_date_start',
-                'value'   => [gmdate('Y-m-d H:i:s', $start), gmdate('Y-m-d H:i:s', $end)],
-                'compare' => 'BETWEEN',
-                'type'    => 'DATETIME',
-            ]],
         ];
 
         $posts = get_posts($args);
         $events = [];
         foreach ($posts as $post) {
+            $color = sanitize_hex_color((string) get_post_meta($post->ID, '_eh_color', true)) ?: '#2271b1';
+
+            $occurrences = $this->registrations->get_occurrences($post->ID);
+            if ($occurrences) {
+                foreach ($occurrences as $occ) {
+                    $occ_id = (int) ($occ['id'] ?? 0);
+                    if ($occ_id <= 0) {
+                        continue;
+                    }
+                    $date_start = $occ['date_start'] ?? '';
+                    if (!$date_start) {
+                        continue;
+                    }
+                    $start_ts = strtotime($date_start);
+                    if ($start_ts && $start && $end && ($start_ts < $start || $start_ts > $end)) {
+                        continue;
+                    }
+                    $date_end = $occ['date_end'] ?? '';
+                    $events[] = [
+                        'id'    => $post->ID . '-' . $occ_id,
+                        'title' => $post->post_title,
+                        'start' => date('c', $start_ts),
+                        'end'   => $date_end ? date('c', strtotime($date_end)) : null,
+                        'url'   => add_query_arg('eh_occurrence', $occ_id, get_permalink($post->ID)),
+                        'backgroundColor' => $color,
+                        'borderColor'     => $color,
+                    ];
+                }
+                continue;
+            }
+
             $date_start = get_post_meta($post->ID, '_eh_date_start', true);
             if (!$date_start) {
                 continue;
             }
+            $start_ts = strtotime($date_start);
+            if ($start_ts && $start && $end && ($start_ts < $start || $start_ts > $end)) {
+                continue;
+            }
             $date_end = get_post_meta($post->ID, '_eh_date_end', true);
-            $color = sanitize_hex_color((string) get_post_meta($post->ID, '_eh_color', true)) ?: '#2271b1';
             $events[] = [
                 'id'    => $post->ID,
                 'title' => $post->post_title,
-                'start' => date('c', strtotime($date_start)),
+                'start' => date('c', $start_ts),
                 'end'   => $date_end ? date('c', strtotime($date_end)) : null,
                 'url'   => get_permalink($post->ID),
                 'backgroundColor' => $color,
@@ -2258,7 +2355,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
 
-    private function export_registrations_csv(int $session_id, string $status, string $name): void
+
+    private function export_registrations_csv(int $session_id, string $status, string $name, int $occurrence_id = 0): void
 
     {
 
@@ -2276,7 +2374,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
 
-        $rows = $this->fetch_registrations($session_id, $status, $name);
+        $rows = $this->fetch_registrations($session_id, $status, $name, $occurrence_id);
         $colleagues_label = $this->get_event_colleagues_label($session_id);
         $extra_map = $this->collect_extra_field_map($rows);
 
@@ -2293,6 +2391,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
         fputcsv($out, [
             'ID',
             'Event',
+            'Datum',
             'Voornaam',
             'Familienaam',
             'E-mail',
@@ -2338,11 +2437,14 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
             $colleagues_label = $this->get_event_colleagues_label((int) $row['session_id']);
 
+            $occurrence_label = $this->format_occurrence_label((int) $row['session_id'], (int) ($row['occurrence_id'] ?? 0));
             fputcsv($out, [
 
                 $row['id'],
 
                 $title,
+
+                $occurrence_label,
 
                 $row['first_name'],
 
@@ -2382,7 +2484,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
 
-    private function render_printable_registrations(int $session_id, string $status, string $name): void
+    private function render_printable_registrations(int $session_id, string $status, string $name, int $occurrence_id = 0): void
 
     {
 
@@ -2398,7 +2500,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         }
 
-        $rows = $this->fetch_registrations($session_id, $status, $name);
+        $rows = $this->fetch_registrations($session_id, $status, $name, $occurrence_id);
 
         $extra_map = $this->collect_extra_field_map($rows);
 
@@ -2449,6 +2551,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
             __('ID', 'event-hub'),
 
             __('Event', 'event-hub'),
+            __('Datum', 'event-hub'),
 
             __('Voornaam', 'event-hub'),
 
@@ -2499,6 +2602,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
             foreach ($rows as $row) {
 
                 $title = get_the_title((int) $row['session_id']);
+                $occurrence_label = $this->format_occurrence_label((int) $row['session_id'], (int) ($row['occurrence_id'] ?? 0));
 
                 $extra_vals = [];
 
@@ -2529,6 +2633,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 echo '<td>' . esc_html($row['id']) . '</td>';
 
                 echo '<td>' . esc_html($title) . '</td>';
+
+                echo '<td>' . esc_html($occurrence_label) . '</td>';
 
                 echo '<td>' . esc_html($row['first_name']) . '</td>';
 
@@ -2589,6 +2695,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
         }
 
         $event_id = isset($_GET['event_id']) ? (int) $_GET['event_id'] : 0;
+        $occurrence_id = isset($_GET['occurrence_id']) ? (int) $_GET['occurrence_id'] : 0;
 
         if (!$event_id) {
 
@@ -2600,7 +2707,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         if (isset($_GET['download'], $_GET['nonce']) && $_GET['download'] === 'csv') {
 
-            $this->export_event_dashboard_csv($event_id, sanitize_text_field((string) $_GET['nonce']));
+            $this->export_event_dashboard_csv($event_id, sanitize_text_field((string) $_GET['nonce']), $occurrence_id);
 
             return;
 
@@ -2618,9 +2725,10 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         }
 
+        $occurrences = $this->registrations->get_occurrences($event_id);
+        $selected_occurrence = $occurrence_id > 0 ? $this->registrations->get_occurrence($event_id, $occurrence_id) : null;
 
-
-        $registrations = $this->registrations->get_registrations_by_session($event_id);
+        $registrations = $this->registrations->get_registrations_by_session($event_id, $occurrence_id);
         $colleagues_label = $this->get_event_colleagues_label($event_id);
         $colleagues_label = $this->get_event_colleagues_label($event_id);
 
@@ -2646,21 +2754,21 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         $active_regs = array_values(array_filter($registrations, static fn($row) => ($row['status'] ?? '') !== 'waitlist'));
 
-        $state = $this->registrations->get_capacity_state($event_id);
+        $state = $this->registrations->get_capacity_state($event_id, $occurrence_id);
 
         $status = get_post_meta($event_id, '_eh_status', true) ?: 'open';
 
-        $date_start = get_post_meta($event_id, '_eh_date_start', true);
+        $date_start = $selected_occurrence ? ($selected_occurrence['date_start'] ?? '') : get_post_meta($event_id, '_eh_date_start', true);
 
-        $date_end = get_post_meta($event_id, '_eh_date_end', true);
+        $date_end = $selected_occurrence ? ($selected_occurrence['date_end'] ?? '') : get_post_meta($event_id, '_eh_date_end', true);
 
         $location = get_post_meta($event_id, '_eh_location', true);
 
         $is_online = (bool) get_post_meta($event_id, '_eh_is_online', true);
 
-        $booking_open = get_post_meta($event_id, '_eh_booking_open', true);
+        $booking_open = $selected_occurrence ? ($selected_occurrence['booking_open'] ?? '') : get_post_meta($event_id, '_eh_booking_open', true);
 
-        $booking_close = get_post_meta($event_id, '_eh_booking_close', true);
+        $booking_close = $selected_occurrence ? ($selected_occurrence['booking_close'] ?? '') : get_post_meta($event_id, '_eh_booking_close', true);
 
         $templates = get_posts([
 
@@ -2754,11 +2862,11 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         echo '<a class="button" href="' . esc_url(get_permalink($event_id)) . '" target="_blank" rel="noopener">' . esc_html__('Bekijk op site', 'event-hub') . '</a>';
 
-        echo '<a class="button" href="' . esc_url(add_query_arg(['page' => 'event-hub-registrations', 'session_id' => $event_id], admin_url('admin.php'))) . '">' . esc_html__('Inschrijvingenlijst', 'event-hub') . '</a>';
+        echo '<a class="button" href="' . esc_url(add_query_arg(['page' => 'event-hub-registrations', 'session_id' => $event_id, 'occurrence_id' => $occurrence_id ?: ''], admin_url('admin.php'))) . '">' . esc_html__('Inschrijvingenlijst', 'event-hub') . '</a>';
 
-        echo '<a class="button" href="' . esc_url(add_query_arg(['page' => 'event-hub-registrations', 'action' => 'new', 'session_id' => $event_id], admin_url('admin.php'))) . '">' . esc_html__('Nieuwe inschrijving', 'event-hub') . '</a>';
+        echo '<a class="button" href="' . esc_url(add_query_arg(['page' => 'event-hub-registrations', 'action' => 'new', 'session_id' => $event_id, 'occurrence_id' => $occurrence_id ?: ''], admin_url('admin.php'))) . '">' . esc_html__('Nieuwe inschrijving', 'event-hub') . '</a>';
 
-        echo '<a class="button" href="' . esc_url(add_query_arg(['page' => 'event-hub-event', 'event_id' => $event_id, 'download' => 'csv', 'nonce' => wp_create_nonce('eh_event_csv_' . $event_id)], admin_url('admin.php'))) . '">' . esc_html__('Download CSV', 'event-hub') . '</a>';
+        echo '<a class="button" href="' . esc_url(add_query_arg(['page' => 'event-hub-event', 'event_id' => $event_id, 'occurrence_id' => $occurrence_id ?: '', 'download' => 'csv', 'nonce' => wp_create_nonce('eh_event_csv_' . $event_id)], admin_url('admin.php'))) . '">' . esc_html__('Download CSV', 'event-hub') . '</a>';
 
         if ($templates) {
 
@@ -2767,6 +2875,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
             wp_nonce_field('eh_event_bulk_mail_' . $event_id, 'eh_event_bulk_mail_nonce');
 
             echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+            echo '<input type="hidden" name="occurrence_id" value="' . esc_attr((string) $occurrence_id) . '">';
 
             echo '<select name="bulk_template_id">';
 
@@ -2836,6 +2945,21 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
 
+        if ($occurrences) {
+            echo '<select name="occurrence_id">';
+            echo '<option value="0">' . esc_html__('Alle datums', 'event-hub') . '</option>';
+            foreach ($occurrences as $occ) {
+                $occ_id = (int) ($occ['id'] ?? 0);
+                if ($occ_id <= 0) {
+                    continue;
+                }
+                $start = $occ['date_start'] ?? '';
+                $label = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : ('#' . $occ_id);
+                echo '<option value="' . esc_attr((string) $occ_id) . '"' . selected($occurrence_id, $occ_id, false) . '>' . esc_html($label) . '</option>';
+            }
+            echo '</select>';
+        }
+
         echo '<input type="search" name="eh_search" placeholder="' . esc_attr__('Zoek op naam of e-mail', 'event-hub') . '" value="' . esc_attr($search_query) . '" style="min-width:240px">';
 
         submit_button(__('Zoeken', 'event-hub'), 'secondary', '', false);
@@ -2874,6 +2998,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
                 __('E-mail', 'event-hub'),
 
+                __('Datum', 'event-hub'),
+
                 __('Telefoon', 'event-hub'),
 
                 __('Bedrijf', 'event-hub'),
@@ -2908,6 +3034,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
                 echo '<td><a href="mailto:' . esc_attr($row['email']) . '">' . esc_html($row['email']) . '</a></td>';
 
+                echo '<td>' . esc_html($this->format_occurrence_label($event_id, (int) ($row['occurrence_id'] ?? 0))) . '</td>';
+
                 echo '<td>' . esc_html($row['phone'] ?? '') . '</td>';
 
                 echo '<td>' . esc_html($row['company'] ?? '') . '</td>';
@@ -2925,6 +3053,10 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 wp_nonce_field('eh_event_dashboard_action_' . $event_id, 'eh_event_dashboard_nonce');
 
                 echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+
+
+                echo '<input type="hidden" name="occurrence_id" value="' . esc_attr((string) $occurrence_id) . '">';
+
 
                 echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $reg_id) . '">';
 
@@ -2951,6 +3083,10 @@ private function collect_stats(int $start_ts, int $end_ts): array
                     wp_nonce_field('eh_event_individual_mail_' . $event_id, 'eh_event_individual_mail_nonce');
 
                     echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+
+
+                    echo '<input type="hidden" name="occurrence_id" value="' . esc_attr((string) $occurrence_id) . '">';
+
 
                     echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $reg_id) . '">';
 
@@ -2981,6 +3117,10 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 wp_nonce_field('eh_event_dashboard_action_' . $event_id, 'eh_event_dashboard_nonce');
 
                 echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+
+
+                echo '<input type="hidden" name="occurrence_id" value="' . esc_attr((string) $occurrence_id) . '">';
+
 
                 echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $reg_id) . '">';
 
@@ -3024,6 +3164,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
                 __('E-mail', 'event-hub'),
 
+                __('Datum', 'event-hub'),
+
                 __('Telefoon', 'event-hub'),
 
                 __('Personen', 'event-hub'),
@@ -3052,6 +3194,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
                 echo '<td><a href="mailto:' . esc_attr($row['email']) . '">' . esc_html($row['email']) . '</a></td>';
 
+                echo '<td>' . esc_html($this->format_occurrence_label($event_id, (int) ($row['occurrence_id'] ?? 0))) . '</td>';
+
                 echo '<td>' . esc_html($row['phone'] ?? '') . '</td>';
 
                 echo '<td>' . esc_html((string) ($row['people_count'] ?? 1)) . '</td>';
@@ -3065,6 +3209,10 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 wp_nonce_field('eh_event_dashboard_action_' . $event_id, 'eh_event_dashboard_nonce');
 
                 echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+
+
+                echo '<input type="hidden" name="occurrence_id" value="' . esc_attr((string) $occurrence_id) . '">';
+
 
                 echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $reg_id) . '">';
 
@@ -3097,6 +3245,10 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 wp_nonce_field('eh_event_dashboard_action_' . $event_id, 'eh_event_dashboard_nonce');
 
                 echo '<input type="hidden" name="event_id" value="' . esc_attr((string) $event_id) . '">';
+
+
+                echo '<input type="hidden" name="occurrence_id" value="' . esc_attr((string) $occurrence_id) . '">';
+
 
                 echo '<input type="hidden" name="registration_id" value="' . esc_attr((string) $reg_id) . '">';
 
@@ -3152,7 +3304,20 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         $event_id = (int) $_POST['event_id'];
 
-        $redirect = add_query_arg(['page' => 'event-hub-event', 'event_id' => $event_id], admin_url('admin.php'));
+        $occurrence_id = isset($_POST['occurrence_id']) ? (int) $_POST['occurrence_id'] : 0;
+
+
+
+        $redirect_args = ['page' => 'event-hub-event', 'event_id' => $event_id];
+
+        if ($occurrence_id > 0) {
+
+            $redirect_args['occurrence_id'] = $occurrence_id;
+
+        }
+
+        $redirect = add_query_arg($redirect_args, admin_url('admin.php'));
+
 
 
 
@@ -3162,7 +3327,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
             if ($template_id) {
 
-                $registrations = $this->registrations->get_registrations_by_session($event_id);
+                $registrations = $this->registrations->get_registrations_by_session($event_id, $occurrence_id);
 
                 foreach ($registrations as $row) {
 
@@ -3282,7 +3447,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
 
-    private function export_event_dashboard_csv(int $event_id, string $nonce): void
+    private function export_event_dashboard_csv(int $event_id, string $nonce, int $occurrence_id = 0): void
 
     {
 
@@ -3298,7 +3463,9 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         }
 
-        $registrations = $this->registrations->get_registrations_by_session($event_id);
+        $registrations = $this->registrations->get_registrations_by_session($event_id, $occurrence_id);
+
+        $colleagues_label = $this->get_event_colleagues_label($event_id);
 
         nocache_headers();
 
@@ -3312,6 +3479,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
             __('Voornaam', 'event-hub'),
             __('Familienaam', 'event-hub'),
             __('E-mail', 'event-hub'),
+            __('Datum', 'event-hub'),
             __('Telefoon', 'event-hub'),
             __('Bedrijf', 'event-hub'),
             __('Aantal personen', 'event-hub'),
@@ -3322,6 +3490,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         foreach ($registrations as $row) {
 
+            $occurrence_label = $this->format_occurrence_label($event_id, (int) ($row['occurrence_id'] ?? 0));
             fputcsv($out, [
 
                 $row['first_name'],
@@ -3329,6 +3498,8 @@ private function collect_stats(int $start_ts, int $end_ts): array
                 $row['last_name'],
 
                 $row['email'],
+
+                $occurrence_label,
 
                 $row['phone'],
 
@@ -3347,6 +3518,23 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         exit;
 
+    }
+
+    private function format_occurrence_label(int $session_id, int $occurrence_id): string
+    {
+        if ($occurrence_id <= 0) {
+            $date_start = get_post_meta($session_id, '_eh_date_start', true);
+            if (!$date_start) {
+                return '';
+            }
+            return date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($date_start));
+        }
+        $occurrence = $this->registrations->get_occurrence($session_id, $occurrence_id);
+        if (!$occurrence || empty($occurrence['date_start'])) {
+            return '';
+        }
+        $start = $occurrence['date_start'];
+        return date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start));
     }
 
     /**

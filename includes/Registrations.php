@@ -38,6 +38,7 @@ class Registrations
 
         $defaults = [
             'session_id' => 0,
+            'occurrence_id' => 0,
             'first_name' => '',
             'last_name' => '',
             'email' => '',
@@ -57,6 +58,7 @@ class Registrations
 
         $data = [
             'session_id' => (int) $data['session_id'],
+            'occurrence_id' => (int) $data['occurrence_id'],
             'first_name' => sanitize_text_field((string) $data['first_name']),
             'last_name'  => sanitize_text_field((string) $data['last_name']),
             'email'      => sanitize_email((string) $data['email']),
@@ -83,6 +85,20 @@ class Registrations
             return new \WP_Error('invalid_email', __('E-mailadres is ongeldig.', 'event-hub'));
         }
 
+        $occurrences = $this->get_occurrences((int) $data['session_id']);
+        $occurrence = null;
+        if ($occurrences) {
+            if ((int) $data['occurrence_id'] <= 0) {
+                return new \WP_Error('occurrence_required', __('Kies een datum voor dit event.', 'event-hub'));
+            }
+            $occurrence = $this->get_occurrence((int) $data['session_id'], (int) $data['occurrence_id']);
+            if (!$occurrence) {
+                return new \WP_Error('occurrence_invalid', __('De gekozen datum is ongeldig.', 'event-hub'));
+            }
+        } else {
+            $data['occurrence_id'] = 0;
+        }
+
         $session_status = get_post_meta((int) $data['session_id'], '_eh_status', true) ?: 'open';
         if (!$is_admin && !in_array($session_status, ['open', 'full'], true)) {
             return new \WP_Error('event_closed', __('Dit event accepteert momenteel geen inschrijvingen.', 'event-hub'));
@@ -104,9 +120,9 @@ class Registrations
         // Booking window + capacity checks
         if (!$is_admin) {
             $now = current_time('timestamp');
-            $open = get_post_meta((int) $data['session_id'], '_eh_booking_open', true);
-            $close = get_post_meta((int) $data['session_id'], '_eh_booking_close', true);
-            $event_start = get_post_meta((int) $data['session_id'], '_eh_date_start', true);
+            $open = $occurrence ? ($occurrence['booking_open'] ?? '') : get_post_meta((int) $data['session_id'], '_eh_booking_open', true);
+            $close = $occurrence ? ($occurrence['booking_close'] ?? '') : get_post_meta((int) $data['session_id'], '_eh_booking_close', true);
+            $event_start = $occurrence ? ($occurrence['date_start'] ?? '') : get_post_meta((int) $data['session_id'], '_eh_date_start', true);
             if ($open && $now < strtotime($open)) {
                 return new \WP_Error('booking_not_open', __('Inschrijvingen zijn nog niet geopend voor dit event.', 'event-hub'));
             }
@@ -122,7 +138,7 @@ class Registrations
                     }
                 }
             }
-            if (!$this->has_capacity((int) $data['session_id'], (int) $data['people_count'])) {
+            if (!$this->has_capacity((int) $data['session_id'], (int) $data['people_count'], (int) $data['occurrence_id'])) {
                 if ($waitlist_opt_in) {
                     $data['status'] = 'waitlist';
                 } else {
@@ -132,7 +148,7 @@ class Registrations
         }
 
         // Duplicate check by email + session
-        if (!$is_admin && $this->exists_by_email((int) $data['session_id'], (string) $data['email'])) {
+        if (!$is_admin && $this->exists_by_email((int) $data['session_id'], (string) $data['email'], (int) $data['occurrence_id'])) {
             return new \WP_Error('duplicate', __('Je bent al ingeschreven voor dit event.', 'event-hub'));
         }
 
@@ -151,7 +167,7 @@ class Registrations
             $this->table,
             $data,
             [
-                '%d','%s','%s','%s','%s','%s','%s','%s','%d','%s','%d','%s','%s','%s','%s'
+                '%d','%d','%s','%s','%s','%s','%s','%s','%s','%d','%s','%d','%s','%s','%s','%s'
             ]
         );
 
@@ -160,7 +176,7 @@ class Registrations
         }
 
         $id = (int) $wpdb->insert_id;
-        $this->sync_session_status((int) $data['session_id']);
+        $this->sync_session_status((int) $data['session_id'], (int) $data['occurrence_id']);
         if (($data['status'] ?? '') !== 'waitlist') {
             do_action('event_hub_registration_created', $id);
         } else {
@@ -217,10 +233,18 @@ class Registrations
      * @param int $session_id
      * @return array<int, array>
      */
-    public function get_registrations_by_session(int $session_id): array
+    public function get_registrations_by_session(int $session_id, int $occurrence_id = 0): array
     {
         global $wpdb;
-        $sql = $wpdb->prepare("SELECT * FROM {$this->table} WHERE session_id = %d ORDER BY created_at DESC", $session_id);
+        if ($occurrence_id > 0) {
+            $sql = $wpdb->prepare(
+                "SELECT * FROM {$this->table} WHERE session_id = %d AND occurrence_id = %d ORDER BY created_at DESC",
+                $session_id,
+                $occurrence_id
+            );
+        } else {
+            $sql = $wpdb->prepare("SELECT * FROM {$this->table} WHERE session_id = %d ORDER BY created_at DESC", $session_id);
+        }
         return $wpdb->get_results($sql, ARRAY_A) ?: [];
     }
 
@@ -265,6 +289,7 @@ class Registrations
         $fields = [];
         $formats = [];
         $map = [
+            'occurrence_id' => '%d',
             'first_name' => '%s',
             'last_name' => '%s',
             'email' => '%s',
@@ -279,7 +304,9 @@ class Registrations
         foreach ($map as $key => $format) {
             if (array_key_exists($key, $data)) {
                 $val = $data[$key];
-                if ($key === 'email') {
+                if ($key === 'occurrence_id') {
+                    $val = max(0, (int) $val);
+                } elseif ($key === 'email') {
                     $val = sanitize_email((string) $val);
                 } elseif (in_array($key, ['first_name','last_name','phone','company','vat','role','status'], true)) {
                     $val = sanitize_text_field((string) $val);
@@ -300,7 +327,10 @@ class Registrations
 
         $res = $wpdb->update($this->table, $fields, ['id' => $id], $formats, ['%d']);
         if ($res !== false) {
-            $this->sync_session_status((int) $existing['session_id']);
+            $occurrence_id = isset($fields['occurrence_id'])
+                ? (int) $fields['occurrence_id']
+                : (int) ($existing['occurrence_id'] ?? 0);
+            $this->sync_session_status((int) $existing['session_id'], $occurrence_id);
             $next_status = isset($fields['status']) ? (string) $fields['status'] : $previous_status;
             if ($previous_status !== 'cancelled' && $next_status === 'cancelled') {
                 do_action('event_hub_registration_cancelled', $id);
@@ -319,7 +349,7 @@ class Registrations
         global $wpdb;
         $res = $wpdb->delete($this->table, ['id' => $id], ['%d']);
         if ($res !== false) {
-            $this->sync_session_status((int) $existing['session_id']);
+            $this->sync_session_status((int) $existing['session_id'], (int) ($existing['occurrence_id'] ?? 0));
             do_action('event_hub_registration_deleted', $id, $existing);
         }
         return $res !== false;
@@ -349,7 +379,17 @@ class Registrations
         }
         // Check cancel cutoff (uren voor start)
         $cutoff_hours = $this->get_cancel_cutoff_hours((int) $reg['session_id']);
-        $start = get_post_meta((int) $reg['session_id'], '_eh_date_start', true);
+        $start = '';
+        $occurrence_id = (int) ($reg['occurrence_id'] ?? 0);
+        if ($occurrence_id > 0) {
+            $occurrence = $this->get_occurrence((int) $reg['session_id'], $occurrence_id);
+            if ($occurrence) {
+                $start = $occurrence['date_start'] ?? '';
+            }
+        }
+        if ($start === '') {
+            $start = get_post_meta((int) $reg['session_id'], '_eh_date_start', true);
+        }
         if ($cutoff_hours > 0 && $start) {
             $start_ts = strtotime($start);
             if ($start_ts && current_time('timestamp') > ($start_ts - ($cutoff_hours * HOUR_IN_SECONDS))) {
@@ -375,7 +415,7 @@ class Registrations
             return new \WP_Error('db_error', __('Annulatie is mislukt. Probeer later opnieuw.', 'event-hub'));
         }
 
-        $this->sync_session_status((int) $reg['session_id']);
+        $this->sync_session_status((int) $reg['session_id'], $occurrence_id);
         do_action('event_hub_registration_cancelled', (int) $reg['id']);
 
         return $this->get_registration((int) $reg['id']);
@@ -384,36 +424,52 @@ class Registrations
     /**
      * Count booked seats for capacity checks.
      */
-    public function count_booked(int $session_id): int
+    public function count_booked(int $session_id, int $occurrence_id = 0): int
     {
         global $wpdb;
         $statuses = ['registered','confirmed'];
         $placeholders = implode(',', array_fill(0, count($statuses), '%s'));
-        $sql = $wpdb->prepare(
-            "SELECT COALESCE(SUM(people_count),0) FROM {$this->table} WHERE session_id = %d AND status IN ($placeholders)",
-            array_merge([$session_id], $statuses)
-        );
+        if ($occurrence_id > 0) {
+            $sql = $wpdb->prepare(
+                "SELECT COALESCE(SUM(people_count),0) FROM {$this->table} WHERE session_id = %d AND occurrence_id = %d AND status IN ($placeholders)",
+                array_merge([$session_id, $occurrence_id], $statuses)
+            );
+        } else {
+            $sql = $wpdb->prepare(
+                "SELECT COALESCE(SUM(people_count),0) FROM {$this->table} WHERE session_id = %d AND status IN ($placeholders)",
+                array_merge([$session_id], $statuses)
+            );
+        }
         return (int) $wpdb->get_var($sql);
     }
 
     /**
      * Count people currently on the waitlist.
      */
-    public function count_waitlist(int $session_id): int
+    public function count_waitlist(int $session_id, int $occurrence_id = 0): int
     {
         global $wpdb;
-        $sql = $wpdb->prepare(
-            "SELECT COALESCE(SUM(people_count),0) FROM {$this->table} WHERE session_id = %d AND status = %s",
-            $session_id,
-            'waitlist'
-        );
+        if ($occurrence_id > 0) {
+            $sql = $wpdb->prepare(
+                "SELECT COALESCE(SUM(people_count),0) FROM {$this->table} WHERE session_id = %d AND occurrence_id = %d AND status = %s",
+                $session_id,
+                $occurrence_id,
+                'waitlist'
+            );
+        } else {
+            $sql = $wpdb->prepare(
+                "SELECT COALESCE(SUM(people_count),0) FROM {$this->table} WHERE session_id = %d AND status = %s",
+                $session_id,
+                'waitlist'
+            );
+        }
         return (int) $wpdb->get_var($sql);
     }
 
     /**
      * Check if new registration can be accepted given capacity.
      */
-    public function can_register(int $session_id, int $people = 1): bool
+    public function can_register(int $session_id, int $people = 1, int $occurrence_id = 0): bool
     {
         // Booking window checks & status
         $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';
@@ -421,9 +477,10 @@ class Registrations
             return false;
         }
         $now = current_time('timestamp');
-        $open = get_post_meta($session_id, '_eh_booking_open', true);
-        $close = get_post_meta($session_id, '_eh_booking_close', true);
-        $event_start = get_post_meta($session_id, '_eh_date_start', true);
+        $occurrence = $occurrence_id > 0 ? $this->get_occurrence($session_id, $occurrence_id) : null;
+        $open = $occurrence ? ($occurrence['booking_open'] ?? '') : get_post_meta($session_id, '_eh_booking_open', true);
+        $close = $occurrence ? ($occurrence['booking_close'] ?? '') : get_post_meta($session_id, '_eh_booking_close', true);
+        $event_start = $occurrence ? ($occurrence['date_start'] ?? '') : get_post_meta($session_id, '_eh_date_start', true);
         if ($open && $now < strtotime($open)) {
             return false;
         }
@@ -439,27 +496,36 @@ class Registrations
                 }
             }
         }
-        return $this->has_capacity($session_id, $people);
+        return $this->has_capacity($session_id, $people, $occurrence_id);
     }
 
     /**
      * Check if a registration exists for email + session.
      */
-    public function exists_by_email(int $session_id, string $email): bool
+    public function exists_by_email(int $session_id, string $email, int $occurrence_id = 0): bool
     {
         global $wpdb;
-        $sql = $wpdb->prepare("SELECT id FROM {$this->table} WHERE session_id = %d AND email = %s LIMIT 1", $session_id, $email);
+        if ($occurrence_id > 0) {
+            $sql = $wpdb->prepare(
+                "SELECT id FROM {$this->table} WHERE session_id = %d AND occurrence_id = %d AND email = %s LIMIT 1",
+                $session_id,
+                $occurrence_id,
+                $email
+            );
+        } else {
+            $sql = $wpdb->prepare("SELECT id FROM {$this->table} WHERE session_id = %d AND email = %s LIMIT 1", $session_id, $email);
+        }
         $id = $wpdb->get_var($sql);
         return !empty($id);
     }
 
-    private function has_capacity(int $session_id, int $people = 1): bool
+    private function has_capacity(int $session_id, int $people = 1, int $occurrence_id = 0): bool
     {
-        $capacity = (int) get_post_meta($session_id, '_eh_capacity', true);
+        $capacity = $this->get_capacity_limit($session_id, $occurrence_id);
         if ($capacity <= 0) {
             return true;
         }
-        $booked = $this->count_booked($session_id);
+        $booked = $this->count_booked($session_id, $occurrence_id);
         return ($booked + max(1, $people)) <= $capacity;
     }
 
@@ -468,11 +534,21 @@ class Registrations
      *
      * @return array{capacity:int, booked:int, available:int, is_full:bool, waitlist:int}
      */
-    public function get_capacity_state(int $session_id): array
+    public function get_capacity_state(int $session_id, int $occurrence_id = 0): array
     {
-        $capacity = (int) get_post_meta($session_id, '_eh_capacity', true);
-        $booked = $this->count_booked($session_id);
-        $waitlist = $this->count_waitlist($session_id);
+        $occurrence = null;
+        if ($occurrence_id > 0) {
+            $occurrence = $this->get_occurrence($session_id, $occurrence_id);
+        } else {
+            $occurrence = $this->get_default_occurrence($session_id);
+            if ($occurrence) {
+                $occurrence_id = (int) $occurrence['id'];
+            }
+        }
+
+        $capacity = $this->get_capacity_limit($session_id, $occurrence_id);
+        $booked = $this->count_booked($session_id, $occurrence_id);
+        $waitlist = $this->count_waitlist($session_id, $occurrence_id);
         if ($capacity <= 0) {
             return [
                 'capacity' => 0,
@@ -480,6 +556,7 @@ class Registrations
                 'available' => 0,
                 'is_full' => false,
                 'waitlist' => $waitlist,
+                'occurrence_id' => $occurrence_id,
             ];
         }
         $available = max(0, $capacity - $booked);
@@ -489,11 +566,24 @@ class Registrations
             'available' => $available,
             'is_full' => $available <= 0,
             'waitlist' => $waitlist,
+            'occurrence_id' => $occurrence_id,
         ];
     }
 
-    public function sync_session_status(int $session_id): void
+    public function sync_session_status(int $session_id, int $occurrence_id = 0): void
     {
+        $occurrences = $this->get_occurrences($session_id);
+        if ($occurrences) {
+            if ($occurrence_id > 0) {
+                $this->promote_waitlist($session_id, $occurrence_id);
+            } else {
+                foreach ($occurrences as $occ) {
+                    $this->promote_waitlist($session_id, (int) $occ['id']);
+                }
+            }
+            return;
+        }
+
         $capacity = (int) get_post_meta($session_id, '_eh_capacity', true);
         $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';
         if (in_array($status, ['cancelled', 'closed'], true)) {
@@ -521,28 +611,35 @@ class Registrations
         }
     }
 
-    private function promote_waitlist(int $session_id): void
+    private function promote_waitlist(int $session_id, int $occurrence_id = 0): void
     {
-        $capacity = (int) get_post_meta($session_id, '_eh_capacity', true);
+        $capacity = $this->get_capacity_limit($session_id, $occurrence_id);
         if ($capacity <= 0) {
             return;
         }
 
         global $wpdb;
-        while ($this->has_capacity($session_id, 1)) {
+        while ($this->has_capacity($session_id, 1, $occurrence_id)) {
             $next = $wpdb->get_row(
-                $wpdb->prepare(
-                    "SELECT * FROM {$this->table} WHERE session_id = %d AND status = %s ORDER BY created_at ASC LIMIT 1",
-                    $session_id,
-                    'waitlist'
-                ),
+                $occurrence_id > 0
+                    ? $wpdb->prepare(
+                        "SELECT * FROM {$this->table} WHERE session_id = %d AND occurrence_id = %d AND status = %s ORDER BY created_at ASC LIMIT 1",
+                        $session_id,
+                        $occurrence_id,
+                        'waitlist'
+                    )
+                    : $wpdb->prepare(
+                        "SELECT * FROM {$this->table} WHERE session_id = %d AND status = %s ORDER BY created_at ASC LIMIT 1",
+                        $session_id,
+                        'waitlist'
+                    ),
                 ARRAY_A
             );
             if (!$next) {
                 break;
             }
             $people = max(1, (int) ($next['people_count'] ?? 1));
-            if (!$this->has_capacity($session_id, $people)) {
+            if (!$this->has_capacity($session_id, $people, $occurrence_id)) {
                 break;
             }
 
@@ -583,6 +680,10 @@ class Registrations
                     'required' => true,
                     'type' => 'integer',
                 ],
+                'occurrence_id' => [
+                    'required' => false,
+                    'type' => 'integer',
+                ],
             ],
         ]);
         register_rest_route('event-hub/v1', '/registrations', [
@@ -592,6 +693,10 @@ class Registrations
             'args' => [
                 'session_id' => [
                     'required' => true,
+                    'type' => 'integer',
+                ],
+                'occurrence_id' => [
+                    'required' => false,
                     'type' => 'integer',
                 ],
                 'fields' => [
@@ -680,6 +785,7 @@ class Registrations
 
         $data = [
             'session_id' => isset($params['session_id']) ? (int) $params['session_id'] : 0,
+            'occurrence_id' => isset($params['occurrence_id']) ? (int) $params['occurrence_id'] : 0,
             'first_name' => sanitize_text_field($params['first_name'] ?? ''),
             'last_name' => sanitize_text_field($params['last_name'] ?? ''),
             'email' => sanitize_email($params['email'] ?? ''),
@@ -709,7 +815,7 @@ class Registrations
         $registration = $this->get_registration($result);
         $is_waitlist = $registration && ($registration['status'] ?? '') === 'waitlist';
 
-        $state = $this->get_capacity_state($data['session_id']);
+        $state = $this->get_capacity_state($data['session_id'], (int) $data['occurrence_id']);
         $status = get_post_meta($data['session_id'], '_eh_status', true) ?: 'open';
         $status_badge = $this->get_status_badge_data($status, $state['is_full']);
         $available_label = '';
@@ -723,7 +829,8 @@ class Registrations
             'registration_id' => $result,
             'waitlist' => $is_waitlist,
             'session' => [
-                'id' => (int) $data['session_id'],
+                'id' => (int) $data['session_id'],
+                'occurrence_id' => (int) $data['occurrence_id'],
                 'status' => $status,
                 'status_label' => $status_badge['label'],
                 'status_class' => $status_badge['class'],
@@ -752,13 +859,21 @@ class Registrations
             ], 404);
         }
 
-        $state = $this->get_capacity_state($session_id);
+        $occurrences = $this->get_occurrences($session_id);
+        $requested_occurrence = (int) $request->get_param('occurrence_id');
+        $selected_occurrence = $requested_occurrence > 0 ? $this->get_occurrence($session_id, $requested_occurrence) : null;
+        if (!$selected_occurrence && $occurrences) {
+            $selected_occurrence = $this->get_default_occurrence($session_id);
+        }
+        $selected_occurrence_id = $selected_occurrence ? (int) ($selected_occurrence['id'] ?? 0) : 0;
+
+        $state = $this->get_capacity_state($session_id, $selected_occurrence_id);
         $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';
         $badge = $this->get_status_badge_data($status, $state['is_full']);
         $color = sanitize_hex_color((string) get_post_meta($session_id, '_eh_color', true)) ?: '#2271b1';
         $hero_image = get_the_post_thumbnail_url($session_id, 'full') ?: '';
-        $date_start = get_post_meta($session_id, '_eh_date_start', true);
-        $date_end = get_post_meta($session_id, '_eh_date_end', true);
+        $date_start = $selected_occurrence ? ($selected_occurrence['date_start'] ?? '') : get_post_meta($session_id, '_eh_date_start', true);
+        $date_end = $selected_occurrence ? ($selected_occurrence['date_end'] ?? '') : get_post_meta($session_id, '_eh_date_end', true);
         $location = get_post_meta($session_id, '_eh_location', true);
         $is_online = (bool) get_post_meta($session_id, '_eh_is_online', true);
         $online_link = get_post_meta($session_id, '_eh_online_link', true);
@@ -767,8 +882,8 @@ class Registrations
         $staff = get_post_meta($session_id, '_eh_staff', true);
         $price = get_post_meta($session_id, '_eh_price', true);
         $ticket_note = get_post_meta($session_id, '_eh_ticket_note', true);
-        $booking_open = get_post_meta($session_id, '_eh_booking_open', true);
-        $booking_close = get_post_meta($session_id, '_eh_booking_close', true);
+        $booking_open = $selected_occurrence ? ($selected_occurrence['booking_open'] ?? '') : get_post_meta($session_id, '_eh_booking_open', true);
+        $booking_close = $selected_occurrence ? ($selected_occurrence['booking_close'] ?? '') : get_post_meta($session_id, '_eh_booking_close', true);
         $enable_module_meta = get_post_meta($session_id, '_eh_enable_module', true);
         $module_enabled = ($enable_module_meta === '') ? true : (bool) $enable_module_meta;
         $hide_fields = array_map('sanitize_key', (array) get_post_meta($session_id, '_eh_form_hide_fields', true));
@@ -786,6 +901,13 @@ class Registrations
         $waitlist_label = $state['waitlist'] > 0
             ? sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $state['waitlist'], 'event-hub'), $state['waitlist'])
             : __('Geen wachtlijst', 'event-hub');
+
+        $occurrence_payloads = [];
+        if ($occurrences) {
+            foreach ($occurrences as $occ) {
+                $occurrence_payloads[] = $this->build_occurrence_payload($session_id, $occ);
+            }
+        }
 
         $can_register = $module_enabled;
         $register_notice = '';
@@ -817,6 +939,8 @@ class Registrations
             'success' => true,
             'session' => [
                 'id' => $session_id,
+                'occurrence_id' => $selected_occurrence_id,
+                'occurrences' => $occurrence_payloads,
                 'title' => get_the_title($session_id),
                 'excerpt' => get_the_excerpt($session_id),
                 'content' => apply_filters('the_content', $post->post_content),
@@ -865,6 +989,132 @@ class Registrations
     }
 
     /**
+     * @return array<int,array{id:int,date_start:string,date_end:string,capacity:int,booking_open:string,booking_close:string}>
+     */
+    public function get_occurrences(int $session_id): array
+    {
+        $raw = get_post_meta($session_id, '_eh_occurrences', true);
+        if (!is_array($raw)) {
+            return [];
+        }
+        $out = [];
+        foreach ($raw as $occ) {
+            if (!is_array($occ)) {
+                continue;
+            }
+            $id = isset($occ['id']) ? (int) $occ['id'] : 0;
+            if ($id <= 0) {
+                continue;
+            }
+            $start = isset($occ['date_start']) ? sanitize_text_field((string) $occ['date_start']) : '';
+            $end = isset($occ['date_end']) ? sanitize_text_field((string) $occ['date_end']) : '';
+            $capacity = isset($occ['capacity']) ? (int) $occ['capacity'] : 0;
+            $booking_open = isset($occ['booking_open']) ? sanitize_text_field((string) $occ['booking_open']) : '';
+            $booking_close = isset($occ['booking_close']) ? sanitize_text_field((string) $occ['booking_close']) : '';
+            $out[] = [
+                'id' => $id,
+                'date_start' => $start,
+                'date_end' => $end,
+                'capacity' => $capacity,
+                'booking_open' => $booking_open,
+                'booking_close' => $booking_close,
+            ];
+        }
+        usort($out, static function (array $a, array $b): int {
+            $a_ts = $a['date_start'] ? strtotime($a['date_start']) : 0;
+            $b_ts = $b['date_start'] ? strtotime($b['date_start']) : 0;
+            return $a_ts <=> $b_ts;
+        });
+        return $out;
+    }
+
+    public function get_occurrence(int $session_id, int $occurrence_id): ?array
+    {
+        if ($occurrence_id <= 0) {
+            return null;
+        }
+        foreach ($this->get_occurrences($session_id) as $occ) {
+            if ((int) $occ['id'] === $occurrence_id) {
+                return $occ;
+            }
+        }
+        return null;
+    }
+
+    public function get_default_occurrence(int $session_id): ?array
+    {
+        $occurrences = $this->get_occurrences($session_id);
+        if (!$occurrences) {
+            return null;
+        }
+        $now = current_time('timestamp');
+        foreach ($occurrences as $occ) {
+            $start_ts = $occ['date_start'] ? strtotime($occ['date_start']) : 0;
+            if ($start_ts && $start_ts >= $now) {
+                return $occ;
+            }
+        }
+        return $occurrences[0] ?? null;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function build_occurrence_payload(int $session_id, array $occurrence): array
+    {
+        $date_start = $occurrence['date_start'] ?? '';
+        $date_end = $occurrence['date_end'] ?? '';
+        $date_label = $date_start ? date_i18n(get_option('date_format'), strtotime($date_start)) : '';
+        $time_start = $date_start ? date_i18n(get_option('time_format'), strtotime($date_start)) : '';
+        $time_end = $date_end ? date_i18n(get_option('time_format'), strtotime($date_end)) : '';
+        $time_range = $time_start && $time_end ? $time_start . ' - ' . $time_end : $time_start;
+        $state = $this->get_capacity_state($session_id, (int) ($occurrence['id'] ?? 0));
+        $availability_label = $state['capacity'] > 0
+            ? sprintf(_n('%d plaats beschikbaar', '%d plaatsen beschikbaar', $state['available'], 'event-hub'), $state['available'])
+            : __('Onbeperkt', 'event-hub');
+        $waitlist_label = $state['waitlist'] > 0
+            ? sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $state['waitlist'], 'event-hub'), $state['waitlist'])
+            : __('Geen wachtlijst', 'event-hub');
+
+        return [
+            'id' => (int) ($occurrence['id'] ?? 0),
+            'date_start' => $date_start,
+            'date_end' => $date_end,
+            'date_label' => $date_label,
+            'time_range' => $time_range,
+            'booking_open' => $occurrence['booking_open'] ?? '',
+            'booking_close' => $occurrence['booking_close'] ?? '',
+            'state' => $state,
+            'availability_label' => $availability_label,
+            'waitlist_label' => $waitlist_label,
+        ];
+    }
+
+    private function format_occurrence_label(int $session_id, int $occurrence_id): string
+    {
+        if ($occurrence_id <= 0) {
+            $date_start = get_post_meta($session_id, '_eh_date_start', true);
+            if (!$date_start) {
+                return '';
+            }
+            $date = date_i18n(get_option('date_format'), strtotime($date_start));
+            $time = date_i18n(get_option('time_format'), strtotime($date_start));
+            return trim($date . ' ' . $time);
+        }
+        $occurrence = $this->get_occurrence($session_id, $occurrence_id);
+        if (!$occurrence) {
+            return '';
+        }
+        $date_start = $occurrence['date_start'] ?? '';
+        if (!$date_start) {
+            return '';
+        }
+        $date = date_i18n(get_option('date_format'), strtotime($date_start));
+        $time = date_i18n(get_option('time_format'), strtotime($date_start));
+        return trim($date . ' ' . $time);
+    }
+
+    /**
      * @return array<int,array{label:string,slug:string,type:string,required:bool,options:array<string>,builtin:bool}>
      */
     /**
@@ -910,6 +1160,17 @@ class Registrations
         return $out;
     }
 
+    private function get_capacity_limit(int $session_id, int $occurrence_id = 0): int
+    {
+        if ($occurrence_id > 0) {
+            $occurrence = $this->get_occurrence($session_id, $occurrence_id);
+            if ($occurrence && isset($occurrence['capacity'])) {
+                return (int) $occurrence['capacity'];
+            }
+        }
+        return (int) get_post_meta($session_id, '_eh_capacity', true);
+    }
+
     /**
      * Validate/sanitize extra payload.
      *
@@ -948,6 +1209,7 @@ class Registrations
     public function handle_rest_registrations(WP_REST_Request $request): WP_REST_Response
     {
         $session_id = (int) $request->get_param('session_id');
+        $occurrence_id = (int) $request->get_param('occurrence_id');
         if ($session_id <= 0) {
             return new WP_REST_Response([
                 'success' => false,
@@ -960,9 +1222,11 @@ class Registrations
         $fields = is_array($fields) ? array_map('sanitize_key', $fields) : [];
         $fields = $fields ? array_values(array_intersect(array_keys($available), $fields)) : array_keys($available);
 
-        $rows = $this->get_registrations_by_session($session_id);
+        $rows = $this->get_registrations_by_session($session_id, $occurrence_id);
         $registrations = [];
         foreach ($rows as $row) {
+            $row_occurrence_id = (int) ($row['occurrence_id'] ?? 0);
+            $occurrence_label = $this->format_occurrence_label((int) $row['session_id'], $row_occurrence_id);
             $decoded_extra = [];
             if (!empty($row['extra_data'])) {
                 $decoded = json_decode((string) $row['extra_data'], true);
@@ -973,6 +1237,8 @@ class Registrations
             $flat_extra = $this->format_extra_data($decoded_extra);
             $record = [
                 'id' => (int) $row['id'],
+                'occurrence_id' => $row_occurrence_id,
+                'occurrence_label' => $occurrence_label,
                 'first_name' => $row['first_name'],
                 'last_name' => $row['last_name'],
                 'email' => $row['email'],
@@ -1137,6 +1403,8 @@ class Registrations
     public function get_export_fields(): array
     {
         return [
+            'occurrence_label' => __('Datum', 'event-hub'),
+            'occurrence_id' => __('Occurrence ID', 'event-hub'),
             'first_name' => __('Voornaam', 'event-hub'),
             'last_name' => __('Familienaam', 'event-hub'),
             'email' => __('E-mail', 'event-hub'),

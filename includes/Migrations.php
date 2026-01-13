@@ -9,7 +9,7 @@ defined('ABSPATH') || exit;
  */
 class Migrations
 {
-    public const DB_VERSION = '1.3.0';
+    public const DB_VERSION = '1.4.1';
     private const OPTION = 'event_hub_db_version';
 
     public function run(): void
@@ -21,7 +21,33 @@ class Migrations
 
         // Current schema: ensure table exists/updated via dbDelta
         Activator::create_tables();
+        $this->maybe_update_registration_indexes();
+        Activator::seed_default_templates();
 
         update_option(self::OPTION, self::DB_VERSION);
+    }
+
+    private function maybe_update_registration_indexes(): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . Registrations::TABLE;
+        $indexes = $wpdb->get_results("SHOW INDEX FROM {$table}", ARRAY_A);
+        if (!$indexes) {
+            return;
+        }
+        $by_name = [];
+        foreach ($indexes as $index) {
+            $name = $index['Key_name'] ?? '';
+            if ($name !== '') {
+                $by_name[$name][] = $index;
+            }
+        }
+
+        if (isset($by_name['uniq_session_email'])) {
+            $wpdb->query("ALTER TABLE {$table} DROP INDEX uniq_session_email");
+        }
+        if (!isset($by_name['uniq_session_occurrence_email'])) {
+            $wpdb->query("ALTER TABLE {$table} ADD UNIQUE KEY uniq_session_occurrence_email (session_id, occurrence_id, email)");
+        }
     }
 }

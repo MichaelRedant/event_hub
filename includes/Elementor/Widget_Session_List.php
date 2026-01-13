@@ -7,6 +7,7 @@ use Elementor\Group_Control_Border;
 use Elementor\Group_Control_Box_Shadow;
 use Elementor\Group_Control_Typography;
 use Elementor\Widget_Base;
+use EventHub\Registrations;
 use EventHub\Settings;
 use WP_Query;
 
@@ -593,7 +594,7 @@ class Widget_Session_List extends Widget_Base
 
         $args = [
             'post_type' => Settings::get_cpt_slug(),
-            'posts_per_page' => !empty($settings['posts_per_page']) ? (int) $settings['posts_per_page'] : 6,
+            'posts_per_page' => -1,
             'orderby' => 'meta_value',
             'order' => 'ASC',
             'meta_key' => '_eh_date_start',
@@ -608,14 +609,7 @@ class Widget_Session_List extends Widget_Base
             ];
         }
 
-        if (!empty($settings['only_future']) && $settings['only_future'] === 'yes') {
-            $meta_query[] = [
-                'key' => '_eh_date_start',
-                'value' => current_time('mysql'),
-                'compare' => '>=',
-                'type' => 'DATETIME',
-            ];
-        }
+        $only_future = !empty($settings['only_future']) && $settings['only_future'] === 'yes';
 
         if (!empty($settings['language'])) {
             $meta_query[] = [
@@ -671,14 +665,70 @@ class Widget_Session_List extends Widget_Base
             echo '</form>';
         }
 
-        $layout = !empty($settings['layout']) ? $settings['layout'] : 'card';
-        echo '<div class="eh-session-list eh-layout-' . esc_attr($layout) . '">';
+        $items = [];
         if ($query->have_posts()) {
-            while ($query->have_posts()) {
-                $query->the_post();
-                $this->render_card(get_the_ID(), $settings);
+            $registrations = new Registrations();
+            $now_ts = current_time('timestamp');
+            foreach ($query->posts as $post) {
+                $post_id = (int) $post->ID;
+                $occurrences = $registrations->get_occurrences($post_id);
+                if ($occurrences) {
+                    foreach ($occurrences as $occ) {
+                        $occ_id = (int) ($occ['id'] ?? 0);
+                        if ($occ_id <= 0) {
+                            continue;
+                        }
+                        $start = $occ['date_start'] ?? '';
+                        if (!$start) {
+                            continue;
+                        }
+                        $start_ts = strtotime($start) ?: 0;
+                        if ($only_future && $start_ts && $start_ts < $now_ts) {
+                            continue;
+                        }
+                        $items[] = [
+                            'post_id' => $post_id,
+                            'occurrence_id' => $occ_id,
+                            'start' => $start,
+                            'start_ts' => $start_ts,
+                        ];
+                    }
+                    continue;
+                }
+                $start = get_post_meta($post_id, '_eh_date_start', true);
+                if (!$start) {
+                    continue;
+                }
+                $start_ts = strtotime($start) ?: 0;
+                if ($only_future && $start_ts && $start_ts < $now_ts) {
+                    continue;
+                }
+                $items[] = [
+                    'post_id' => $post_id,
+                    'occurrence_id' => 0,
+                    'start' => $start,
+                    'start_ts' => $start_ts,
+                ];
             }
             wp_reset_postdata();
+        }
+
+        if ($items) {
+            usort($items, static function ($a, $b): int {
+                return ($a['start_ts'] ?? 0) <=> ($b['start_ts'] ?? 0);
+            });
+            $limit = !empty($settings['posts_per_page']) ? (int) $settings['posts_per_page'] : 6;
+            if ($limit > 0) {
+                $items = array_slice($items, 0, $limit);
+            }
+        }
+
+        $layout = !empty($settings['layout']) ? $settings['layout'] : 'card';
+        echo '<div class="eh-session-list eh-layout-' . esc_attr($layout) . '">';
+        if ($items) {
+            foreach ($items as $item) {
+                $this->render_card((int) $item['post_id'], $settings, (int) $item['occurrence_id'], (string) ($item['start'] ?? ''));
+            }
         } else {
             $empty = !empty($settings['empty_state_text']) ? $settings['empty_state_text'] : __('Geen komende events gevonden.', 'event-hub');
             echo '<p class="eh-empty-state">' . esc_html($empty) . '</p>';
@@ -718,25 +768,34 @@ class Widget_Session_List extends Widget_Base
         ];
     }
 
-    private function render_card(int $post_id, array $settings): void
+    private function render_card(int $post_id, array $settings, int $occurrence_id = 0, string $start_override = ''): void
     {
         $title = get_the_title($post_id);
         $permalink = get_permalink($post_id);
         $excerpt = get_the_excerpt($post_id);
-        $start = get_post_meta($post_id, '_eh_date_start', true);
+        $start = $start_override ?: get_post_meta($post_id, '_eh_date_start', true);
         $location = get_post_meta($post_id, '_eh_location', true);
         $price = get_post_meta($post_id, '_eh_price', true);
         $ticket_note = get_post_meta($post_id, '_eh_ticket_note', true);
         $color = sanitize_hex_color((string) get_post_meta($post_id, '_eh_color', true)) ?: '#2271b1';
         $status = get_post_meta($post_id, '_eh_status', true) ?: 'open';
 
-        [$capacity, $booked, $available, $is_full, $waitlist] = $this->get_capacity_state($post_id);
+        [$capacity, $booked, $available, $is_full, $waitlist] = $this->get_capacity_state($post_id, $occurrence_id);
         $date_label = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : '';
 
         $badge = $this->get_status_badge($status, $is_full);
         $colleagues = $this->get_colleagues_for_session($post_id);
 
-        echo '<article class="eh-session-card" data-eventhub-session="' . esc_attr((string) $post_id) . '">';
+        if ($occurrence_id > 0) {
+            $permalink = add_query_arg('eh_occurrence', $occurrence_id, $permalink);
+        }
+
+        $card_attrs = 'data-eventhub-session="' . esc_attr((string) $post_id) . '"';
+        if ($occurrence_id > 0) {
+            $card_attrs .= ' data-eventhub-occurrence="' . esc_attr((string) $occurrence_id) . '"';
+        }
+
+        echo '<article class="eh-session-card" ' . $card_attrs . '>';
         if (!empty($settings['show_availability']) && $settings['show_availability'] === 'yes' && $badge) {
             echo '<span class="eh-badge ' . esc_attr($badge['class']) . '" data-eventhub-status>' . esc_html($badge['label']) . '</span>';
         }
@@ -770,7 +829,11 @@ class Widget_Session_List extends Widget_Base
         }
         if (!empty($settings['show_button']) && $settings['show_button'] === 'yes') {
             $button_label = !empty($settings['button_text']) ? $settings['button_text'] : __('Meer informatie', 'event-hub');
-            echo '<a class="eh-btn" data-eventhub-button data-eventhub-open="' . esc_attr((string) $post_id) . '" style="background:' . esc_attr($color) . ';" href="' . esc_url($permalink) . '">' . esc_html($button_label) . '</a>';
+            $button_attrs = 'class="eh-btn" data-eventhub-button data-eventhub-open="' . esc_attr((string) $post_id) . '"';
+            if ($occurrence_id > 0) {
+                $button_attrs .= ' data-eventhub-occurrence="' . esc_attr((string) $occurrence_id) . '"';
+            }
+            echo '<a ' . $button_attrs . ' style="background:' . esc_attr($color) . ';" href="' . esc_url($permalink) . '">' . esc_html($button_label) . '</a>';
         }
         echo '</article>';
     }
@@ -778,30 +841,16 @@ class Widget_Session_List extends Widget_Base
     /**
      * @return array{int,int,int,bool,int} [capacity, booked, available, is_full, waitlist]
      */
-    private function get_capacity_state(int $post_id): array
+    private function get_capacity_state(int $post_id, int $occurrence_id = 0): array
     {
-        $capacity = (int) get_post_meta($post_id, '_eh_capacity', true);
-        if ($capacity <= 0) {
-            return [0, 0, 0, false, 0];
-        }
-
-        global $wpdb;
-        $table = $wpdb->prefix . 'eh_session_registrations';
-        $booked = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COALESCE(SUM(people_count),0) FROM {$table} WHERE session_id = %d AND status IN ('registered','confirmed')",
-                $post_id
-            )
-        );
-        $waitlist = (int) $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT COALESCE(SUM(people_count),0) FROM {$table} WHERE session_id = %d AND status = %s",
-                $post_id,
-                'waitlist'
-            )
-        );
-        $available = max(0, $capacity - $booked);
-        return [$capacity, $booked, $available, $available <= 0, $waitlist];
+        $registrations = new Registrations();
+        $state = $registrations->get_capacity_state($post_id, $occurrence_id);
+        $capacity = (int) ($state['capacity'] ?? 0);
+        $booked = (int) ($state['booked'] ?? 0);
+        $available = (int) ($state['available'] ?? 0);
+        $waitlist = (int) ($state['waitlist'] ?? 0);
+        $is_full = !empty($state['is_full']);
+        return [$capacity, $booked, $available, $is_full, $waitlist];
     }
 
     /**

@@ -109,7 +109,7 @@ class Blocks
 
         $query = new \WP_Query([
             'post_type' => Settings::get_cpt_slug(),
-            'posts_per_page' => $count,
+            'posts_per_page' => -1,
             'orderby' => 'meta_value',
             'meta_key' => '_eh_date_start',
             'order' => $order,
@@ -120,23 +120,81 @@ class Blocks
             return '<div class="eh-session-list-block no-results">' . esc_html__('Geen events gevonden.', 'event-hub') . '</div>';
         }
 
+        $items = [];
+        foreach ($query->posts as $post) {
+            $session_id = (int) $post->ID;
+            $occurrences = $this->registrations->get_occurrences($session_id);
+            if ($occurrences) {
+                foreach ($occurrences as $occ) {
+                    $occ_id = (int) ($occ['id'] ?? 0);
+                    if ($occ_id <= 0) {
+                        continue;
+                    }
+                    $start = $occ['date_start'] ?? '';
+                    if (!$start) {
+                        continue;
+                    }
+                    $items[] = [
+                        'session_id' => $session_id,
+                        'occurrence_id' => $occ_id,
+                        'start' => $start,
+                        'start_ts' => strtotime($start),
+                    ];
+                }
+                continue;
+            }
+            $start = get_post_meta($session_id, '_eh_date_start', true);
+            if (!$start) {
+                continue;
+            }
+            $items[] = [
+                'session_id' => $session_id,
+                'occurrence_id' => 0,
+                'start' => $start,
+                'start_ts' => strtotime($start),
+            ];
+        }
+
+        if (!$items) {
+            wp_reset_postdata();
+            return '<div class="eh-session-list-block no-results">' . esc_html__('Geen events gevonden.', 'event-hub') . '</div>';
+        }
+
+        usort($items, static function ($a, $b) use ($order): int {
+            $left = $a['start_ts'] ?? 0;
+            $right = $b['start_ts'] ?? 0;
+            if ($left === $right) {
+                return 0;
+            }
+            if ($order === 'DESC') {
+                return $left < $right ? 1 : -1;
+            }
+            return $left < $right ? -1 : 1;
+        });
+
+        $items = array_slice($items, 0, $count);
+
         ob_start();
         echo '<div class="eh-session-list-block">';
-        while ($query->have_posts()) {
-            $query->the_post();
-            $session_id = get_the_ID();
-            $start = get_post_meta($session_id, '_eh_date_start', true);
+        foreach ($items as $item) {
+            $session_id = (int) $item['session_id'];
+            $occurrence_id = (int) $item['occurrence_id'];
+            $start = $item['start'] ?? '';
             $time = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : '';
-            $excerpt = $show_excerpt ? get_the_excerpt() : '';
+            $excerpt = $show_excerpt ? get_the_excerpt($session_id) : '';
+            $permalink = get_permalink($session_id);
+            if ($occurrence_id > 0) {
+                $permalink = add_query_arg('eh_occurrence', $occurrence_id, $permalink);
+            }
             echo '<article class="eh-session-card">';
-            echo '<h3 class="eh-session-title"><a href="' . esc_url(get_permalink()) . '">' . esc_html(get_the_title()) . '</a></h3>';
+            echo '<h3 class="eh-session-title"><a href="' . esc_url($permalink) . '">' . esc_html(get_the_title($session_id)) . '</a></h3>';
             if ($show_date && $time) {
                 echo '<div class="eh-session-meta"><span class="eh-session-date">' . esc_html($time) . '</span></div>';
             }
             if ($excerpt) {
                 echo '<div class="eh-session-excerpt">' . esc_html($excerpt) . '</div>';
             }
-            echo '<a class="eh-session-link" href="' . esc_url(get_permalink()) . '">' . esc_html__('Bekijk event', 'event-hub') . '</a>';
+            echo '<a class="eh-session-link" href="' . esc_url($permalink) . '">' . esc_html__('Bekijk event', 'event-hub') . '</a>';
             echo '</article>';
         }
         echo '</div>';

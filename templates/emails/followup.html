@@ -1,0 +1,88 @@
+<title>Bedankt - {event_title}</title>
+
+<!-- Preheader (verborgen) -->
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">
+  Bedankt voor je deelname aan {event_title}.
+</div>
+
+<!-- Wrapper -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#eef3f6;width:100%;margin:0;padding:0">
+  <tr>
+    <td align="center" style="padding:24px 12px">
+      <!-- Container -->
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="640" style="width:640px;max-width:640px;background:#ffffff;border-radius:18px;overflow:hidden">
+        <!-- Header -->
+        <tr>
+          <td style="padding:22px 22px 14px 22px;background:#ffffff">
+            <div style="font-family:Arial, sans-serif;color:#0A1B2A">
+              <div style="font-size:14px;letter-spacing:0.02em;color:#2b5f83;font-weight:700">
+                {site_name}
+              </div>
+              <div style="margin-top:6px;font-size:20px;line-height:1.25;font-weight:800">
+                Bedankt voor je deelname
+              </div>
+              <div style="margin-top:6px;font-size:14px;color:#35556b;line-height:1.6">
+                {event_title}
+              </div>
+            </div>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:18px 22px 6px 22px">
+            <div style="font-family:Arial, sans-serif;color:#0A1B2A;font-size:15px;line-height:1.7">
+              Dag {first_name},<br /><br />
+              Bedankt om erbij te zijn tijdens <strong>{event_title}</strong>. We hopen dat je het waardevol vond.
+              Als je nog vragen hebt, mag je altijd antwoorden op deze mail.
+            </div>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:10px 22px 6px 22px">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f7fbff;border-radius:14px">
+              <tr>
+                <td style="padding:14px 14px">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+                    <tr>
+                      <td style="font-family:Arial, sans-serif;font-size:13px;color:#2b5f83;font-weight:700;padding-bottom:6px">
+                        Praktische info
+                      </td>
+                    </tr>
+
+                    <tr>
+                      <td style="font-family:Arial, sans-serif;font-size:14px;color:#0A1B2A;line-height:1.6">
+                        <strong>Datum:</strong> {event_date}<br />
+                        <strong>Uur:</strong> {event_time}<br />
+                        <strong>Locatie:</strong> {event_location}<br />
+                        <br />
+                        <strong>Aantal personen:</strong> {people_count}
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:14px 22px 22px 22px;background:#ffffff">
+            <div style="font-family:Arial, sans-serif;color:#0A1B2A;font-size:14px;line-height:1.7">
+              Met vriendelijke groeten,<br />
+              <strong>{site_name}</strong>
+            </div>
+            <div style="font-family:Arial, sans-serif;color:#6a8597;font-size:12px;line-height:1.6;margin-top:10px">
+              {site_url}
+            </div>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Small spacer -->
+      <div style="height:18px;line-height:18px;font-size:18px">&nbsp;</div>
+    </td>
+  </tr>
+</table>

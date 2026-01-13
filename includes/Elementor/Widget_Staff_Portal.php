@@ -88,6 +88,29 @@ class Widget_Staff_Portal extends Widget_Base
                 'title' => $post->post_title,
             ];
         }, $events);
+        $occurrence_map = [];
+        foreach ($events as $event_post) {
+            $occurrences = $registrations->get_occurrences((int) $event_post->ID);
+            if (!$occurrences) {
+                continue;
+            }
+            $items = [];
+            foreach ($occurrences as $occ) {
+                $occ_id = (int) ($occ['id'] ?? 0);
+                if ($occ_id <= 0) {
+                    continue;
+                }
+                $start = $occ['date_start'] ?? '';
+                $label = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : ('#' . $occ_id);
+                $items[] = [
+                    'id' => $occ_id,
+                    'label' => $label,
+                ];
+            }
+            if ($items) {
+                $occurrence_map[(int) $event_post->ID] = $items;
+            }
+        }
 
         if (!$events_data) {
             echo '<div class="eh-staff-portal-note">' . esc_html__('Geen events gevonden om te tonen.', 'event-hub') . '</div>';
@@ -95,11 +118,12 @@ class Widget_Staff_Portal extends Widget_Base
         }
 
         $data_attrs = sprintf(
-            'data-rest="%s" data-views="%s" data-nonce="%s" data-events="%s" data-fields="%s"',
+            'data-rest="%s" data-views="%s" data-nonce="%s" data-events="%s" data-occurrences="%s" data-fields="%s"',
             esc_url($rest_url),
             esc_url($views_url),
             esc_attr($nonce),
             esc_attr(wp_json_encode($events_data)),
+            esc_attr(wp_json_encode($occurrence_map)),
             esc_attr(wp_json_encode($fields))
         );
         ?>
@@ -111,6 +135,11 @@ class Widget_Staff_Portal extends Widget_Base
                         <?php foreach ($events_data as $event): ?>
                             <option value="<?php echo esc_attr((string) $event['id']); ?>"><?php echo esc_html($event['title']); ?></option>
                         <?php endforeach; ?>
+                    </select>
+                </label>
+                <label><?php esc_html_e('Datum', 'event-hub'); ?>
+                    <select class="eh-sp-occurrence" disabled>
+                        <option value=""><?php esc_html_e('Alle datums', 'event-hub'); ?></option>
                     </select>
                 </label>
             </div>

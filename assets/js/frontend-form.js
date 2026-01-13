@@ -44,6 +44,7 @@
         });
 
         payload.session_id = parseInt(payload.session_id || form.dataset.ehevent || 0, 10);
+        payload.occurrence_id = parseInt(payload.occurrence_id || '0', 10);
         payload.people_count = parseInt(payload.people_count || '1', 10);
         payload.consent_marketing = formData.get('consent_marketing') ? 1 : 0;
         payload._eh_hp = formData.get('_eh_hp') || '';
@@ -136,6 +137,7 @@
     const scan = () => {
         document.querySelectorAll('[data-event-hub-form]').forEach(bindForm);
         document.querySelectorAll('[data-eventhub-open]').forEach(bindCard);
+        document.querySelectorAll('[data-event-hub-form]').forEach(bindOccurrenceSelect);
     };
 
     const handleRegistrationSuccess = (session) => {
@@ -149,7 +151,17 @@
     };
 
     const updateEventListCards = (session) => {
-        const cards = document.querySelectorAll(`.eh-session-card[data-eventhub-session="${session.id}"]`);
+        let cards = [];
+        const baseSelector = `.eh-session-card[data-eventhub-session="${session.id}"]`;
+        if (session.occurrence_id) {
+            const occSelector = `${baseSelector}[data-eventhub-occurrence="${session.occurrence_id}"]`;
+            cards = document.querySelectorAll(occSelector);
+            if (!cards.length) {
+                cards = document.querySelectorAll(baseSelector);
+            }
+        } else {
+            cards = document.querySelectorAll(baseSelector);
+        }
         if (!cards.length) {
             return;
         }
@@ -201,11 +213,12 @@
         button.dataset.ehBound = '1';
         button.addEventListener('click', (event) => {
             const sessionId = resolveSessionId(button);
+            const occurrenceId = resolveOccurrenceId(button);
             if (!sessionId) {
                 return;
             }
             event.preventDefault();
-            openSessionModal(sessionId);
+            openSessionModal(sessionId, occurrenceId);
         });
     };
 
@@ -221,12 +234,29 @@
         return id;
     };
 
-    const openSessionModal = (sessionId) => {
+    const resolveOccurrenceId = (button) => {
+        const attr = button.dataset.eventhubOccurrence || '';
+        let id = parseInt(attr || '0', 10);
+        if (!id) {
+            const card = button.closest('[data-eventhub-occurrence]');
+            if (card) {
+                id = parseInt(card.getAttribute('data-eventhub-occurrence') || '0', 10);
+            }
+        }
+        return id;
+    };
+
+    const openSessionModal = (sessionId, occurrenceId) => {
         if (!sessionEndpoint) {
             return;
         }
         showModalLoading();
-        fetch(`${sessionEndpoint}?session_id=${encodeURIComponent(sessionId)}`, {
+        const url = new URL(sessionEndpoint);
+        url.searchParams.set('session_id', sessionId);
+        if (occurrenceId) {
+            url.searchParams.set('occurrence_id', occurrenceId);
+        }
+        fetch(url.toString(), {
             method: 'GET',
             credentials: 'same-origin',
             headers: {
@@ -301,7 +331,7 @@
         const badge = session.badge ? `<span class="eh-badge ${session.badge.class || ''}">${session.badge.label || ''}</span>` : '';
         const meta = [];
         if (session.date_label) {
-            meta.push(`<div class="eh-meta">${session.date_label}${session.time_range ? ' | ' + session.time_range : ''}</div>`);
+            meta.push(`<div class="eh-meta" data-eventhub-date>${session.date_label}${session.time_range ? ' | ' + session.time_range : ''}</div>`);
         }
         if (session.location_label) {
             meta.push(`<div class="eh-meta">${session.location_label}</div>`);
@@ -322,8 +352,8 @@
             meta.push(`<div class="eh-meta">${session.ticket_note}</div>`);
         }
 
-        const availability = `<div class="eh-meta eh-availability">${session.availability_label || ''}</div>` +
-            (session.waitlist_label ? `<div class="eh-meta eh-waitlist">${session.waitlist_label}</div>` : '');
+        const availability = `<div class="eh-meta eh-availability" data-eventhub-availability>${session.availability_label || ''}</div>` +
+            (session.waitlist_label ? `<div class="eh-meta eh-waitlist" data-eventhub-waitlist>${session.waitlist_label}</div>` : '');
 
         const share = buildShareBar(session);
 
@@ -361,6 +391,7 @@
         root.classList.add('is-visible');
 
         content.querySelectorAll('[data-event-hub-form]').forEach(bindForm);
+        bindOccurrenceSelect(content);
         if (session.captcha && session.captcha.enabled) {
             ensureCaptchaToken(session.captcha);
         }
@@ -372,6 +403,9 @@
         fields.push(fieldInput('first_name', getMessage('first_name', 'Voornaam'), true));
         fields.push(fieldInput('last_name', getMessage('last_name', 'Familienaam'), true));
         fields.push(fieldInput('email', getMessage('email', 'E-mail'), true, 'email'));
+        if (Array.isArray(session.occurrences) && session.occurrences.length) {
+            fields.push(occurrenceSelect(session.occurrences, session.occurrence_id || 0));
+        }
         if (!hide.includes('phone')) {
             fields.push(fieldInput('phone', getMessage('phone', 'Telefoon'), false));
         }
@@ -407,8 +441,9 @@
         if (!hide.includes('marketing')) {
             fields.push(checkboxInput('consent_marketing', getMessage('marketing_optin', 'Ik wil relevante communicatie ontvangen.')));
         }
-        if (waitlistMode) {
-            fields.push(checkboxInput('waitlist_opt_in', getMessage('waitlist_opt_in', 'Zet me op de wachtlijst indien volzet.'), true));
+        const hasOccurrences = Array.isArray(session.occurrences) && session.occurrences.length;
+        if (waitlistMode || hasOccurrences) {
+            fields.push(waitlistOptInInput(getMessage('waitlist_opt_in', 'Zet me op de wachtlijst indien volzet.'), waitlistMode, hasOccurrences && !waitlistMode));
         }
 
         const submitLabel = waitlistMode ? getMessage('waitlist_submit', 'Op wachtlijst plaatsen') : getMessage('submit', 'Inschrijven');
@@ -450,8 +485,72 @@
         return `<div class="field"><label>${label}${required ? ' *' : ''}</label><select name="${name}"${req}><option value="">${getMessage('choose', 'Maak een keuze')}</option>${opts}</select></div>`;
     };
 
+    const occurrenceSelect = (occurrences, selectedId) => {
+        const opts = (occurrences || []).map((occ) => {
+            const labelParts = [];
+            if (occ.date_label) {
+                labelParts.push(occ.date_label);
+            }
+            if (occ.time_range) {
+                labelParts.push(occ.time_range);
+            }
+            if (occ.availability_label) {
+                labelParts.push(occ.availability_label);
+            }
+            const label = labelParts.filter(Boolean).join(' | ');
+            const selected = Number(occ.id) === Number(selectedId) ? ' selected' : '';
+            const dataAttrs = ` data-date-label="${occ.date_label || ''}" data-time-range="${occ.time_range || ''}" data-availability="${occ.availability_label || ''}" data-waitlist="${occ.waitlist_label || ''}" data-full="${occ.state && occ.state.is_full ? '1' : '0'}"`;
+            return `<option value="${occ.id}"${selected}${dataAttrs}>${label || occ.id}</option>`;
+        }).join('');
+        return `<div class="field full"><label>${getMessage('occurrence', 'Kies datum')} *</label><select name="occurrence_id" required><option value="">${getMessage('choose', 'Maak een keuze')}</option>${opts}</select></div>`;
+    };
+
     const checkboxInput = (name, label, checked = false) => {
         return `<div class="field full checkbox"><label><input type="checkbox" name="${name}" value="1"${checked ? ' checked' : ''}> ${label}</label></div>`;
+    };
+
+    const waitlistOptInInput = (label, checked, hidden) => {
+        const style = hidden ? ' style="display:none"' : '';
+        return `<div class="field full checkbox" data-eventhub-waitlist-optin${style}><label><input type="checkbox" name="waitlist_opt_in" value="1"${checked ? ' checked' : ''}> ${label}</label></div>`;
+    };
+
+    const bindOccurrenceSelect = (root) => {
+        if (!root) {
+            return;
+        }
+        const select = root.querySelector('select[name="occurrence_id"]');
+        if (!select) {
+            return;
+        }
+        const dateEl = root.querySelector('[data-eventhub-date]');
+        const availabilityEl = root.querySelector('[data-eventhub-availability]');
+        const waitlistEl = root.querySelector('[data-eventhub-waitlist]');
+        const waitlistOptIn = root.querySelector('[data-eventhub-waitlist-optin]');
+
+        const update = () => {
+            const opt = select.selectedOptions && select.selectedOptions[0] ? select.selectedOptions[0] : null;
+            if (!opt) {
+                return;
+            }
+            const dateLabel = opt.getAttribute('data-date-label') || '';
+            const timeRange = opt.getAttribute('data-time-range') || '';
+            if (dateEl) {
+                dateEl.textContent = dateLabel + (timeRange ? ' | ' + timeRange : '');
+            }
+            if (availabilityEl) {
+                availabilityEl.textContent = opt.getAttribute('data-availability') || '';
+            }
+            if (waitlistEl) {
+                waitlistEl.textContent = opt.getAttribute('data-waitlist') || '';
+            }
+            if (waitlistOptIn) {
+                const isFull = opt.getAttribute('data-full') === '1';
+                waitlistOptIn.style.display = isFull ? '' : 'none';
+            }
+        };
+
+        select.addEventListener('change', update);
+        update();
     };
 
     const buildShareBar = (session) => {

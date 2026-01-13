@@ -29,6 +29,7 @@ class Activator
         $sql = "CREATE TABLE {$table} (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
             session_id bigint(20) unsigned NOT NULL,
+            occurrence_id bigint(20) unsigned NOT NULL DEFAULT 0,
             first_name varchar(190) NOT NULL,
             last_name varchar(190) NOT NULL,
             email varchar(190) NOT NULL,
@@ -45,8 +46,9 @@ class Activator
             updated_at datetime NOT NULL,
             PRIMARY KEY  (id),
             KEY session_id (session_id),
+            KEY occurrence_id (occurrence_id),
             KEY status (status),
-            UNIQUE KEY uniq_session_email (session_id, email),
+            UNIQUE KEY uniq_session_occurrence_email (session_id, occurrence_id, email),
             UNIQUE KEY uniq_cancel_token (cancel_token)
         ) $charset_collate;";
 
@@ -72,46 +74,130 @@ class Activator
         ];
     }
 
-    private static function seed_default_templates(): void
+    public static function seed_default_templates(): void
     {
-        $existing = get_posts([
-            'post_type' => CPT_Email::CPT,
-            'posts_per_page' => 1,
-            'post_status' => 'any',
-            'fields' => 'ids',
-        ]);
-        if ($existing) {
+        $templates = self::get_default_email_templates();
+        if (!$templates) {
             return;
         }
 
-        $templates = [
-            [
-                'post_title' => __('Bevestiging standaard', 'event-hub'),
-                'subject'    => __('Je inschrijving voor {event_title}', 'event-hub'),
-                'body'       => __("Dag {first_name},\n\nBedankt voor je inschrijving voor {event_title} op {event_date} om {event_time}.\nLocatie: {event_location}\nOnline link: {event_online_link}\nAantal personen: {people_count}\n\nKan je toch niet komen? Annuleer hier: {cancel_link}\n\nTot snel!\n{site_name}", 'event-hub'),
-            ],
-            [
-                'post_title' => __('Herinnering standaard', 'event-hub'),
-                'subject'    => __('Herinnering: {event_title}', 'event-hub'),
-                'body'       => __("Dag {first_name},\n\nBinnenkort vindt {event_title} plaats op {event_date} om {event_time}.\nLocatie: {event_location}\nOnline link: {event_online_link}\n\nKan je niet aanwezig zijn? Annuleer je deelname via: {cancel_link}\n\nTot dan!\n{site_name}", 'event-hub'),
-            ],
-            [
-                'post_title' => __('Bedankt standaard', 'event-hub'),
-                'subject'    => __('Bedankt voor je aanwezigheid bij {event_title}', 'event-hub'),
-                'body'       => __("Dag {first_name},\n\nBedankt om aanwezig te zijn op {event_title}. Laat ons zeker weten wat je ervan vond.\n\nVriendelijke groeten,\n{site_name}", 'event-hub'),
-            ],
-        ];
-
         foreach ($templates as $tpl) {
+            $key = isset($tpl['key']) ? (string) $tpl['key'] : '';
+            $title = isset($tpl['post_title']) ? (string) $tpl['post_title'] : '';
+            $body = isset($tpl['body']) ? (string) $tpl['body'] : '';
+            if ($title === '') {
+                continue;
+            }
+            if ($body === '') {
+                continue;
+            }
+            if (self::default_template_exists($key, $title)) {
+                continue;
+            }
             $post_id = wp_insert_post([
                 'post_type'   => CPT_Email::CPT,
                 'post_status' => 'publish',
-                'post_title'  => $tpl['post_title'],
+                'post_title'  => $title,
             ]);
             if ($post_id && !is_wp_error($post_id)) {
-                update_post_meta($post_id, '_eh_email_subject', $tpl['subject']);
-                update_post_meta($post_id, '_eh_email_body', $tpl['body']);
+                update_post_meta($post_id, '_eh_email_subject', (string) ($tpl['subject'] ?? ''));
+                update_post_meta($post_id, '_eh_email_body', $body);
+                if (!empty($tpl['type'])) {
+                    update_post_meta($post_id, '_eh_email_type', (string) $tpl['type']);
+                }
+                if ($key !== '') {
+                    update_post_meta($post_id, '_eh_email_system_key', $key);
+                }
             }
         }
+    }
+
+    private static function default_template_exists(string $key, string $title): bool
+    {
+        if ($key !== '') {
+            $existing = get_posts([
+                'post_type' => CPT_Email::CPT,
+                'posts_per_page' => 1,
+                'post_status' => 'any',
+                'fields' => 'ids',
+                'meta_query' => [
+                    [
+                        'key' => '_eh_email_system_key',
+                        'value' => $key,
+                        'compare' => '=',
+                    ],
+                ],
+            ]);
+            if ($existing) {
+                return true;
+            }
+        }
+
+        $by_title = get_page_by_title($title, OBJECT, CPT_Email::CPT);
+        return (bool) $by_title;
+    }
+
+    private static function load_template_body(string $filename): string
+    {
+        $path = trailingslashit(EVENT_HUB_PATH) . 'templates/emails/' . $filename;
+        if (!file_exists($path)) {
+            return '';
+        }
+        $contents = file_get_contents($path);
+        return $contents !== false ? $contents : '';
+    }
+
+    /**
+     * @return array<int,array{key:string,post_title:string,subject:string,body:string,type?:string}>
+     */
+    private static function get_default_email_templates(): array
+    {
+        return [
+            [
+                'key' => 'waitlist_default',
+                'post_title' => __('Wachtlijst bevestiging (standaard)', 'event-hub'),
+                'subject'    => __('Bevestiging wachtlijst - {event_title}', 'event-hub'),
+                'body'       => self::load_template_body('waitlist.html'),
+            ],
+            [
+                'key' => 'waitlist_promotion_default',
+                'post_title' => __('Wachtlijst promotie (standaard)', 'event-hub'),
+                'subject'    => __('Je bent ingeschreven - {event_title}', 'event-hub'),
+                'body'       => self::load_template_body('waitlist-promotion.html'),
+            ],
+            [
+                'key' => 'confirmation_default',
+                'post_title' => __('Bevestiging inschrijving (standaard)', 'event-hub'),
+                'subject'    => __('Je bent ingeschreven - {event_title}', 'event-hub'),
+                'body'       => self::load_template_body('confirmation.html'),
+                'type'       => 'confirmation',
+            ],
+            [
+                'key' => 'reminder_default',
+                'post_title' => __('Herinnering (standaard)', 'event-hub'),
+                'subject'    => __('Herinnering - {event_title}', 'event-hub'),
+                'body'       => self::load_template_body('reminder.html'),
+                'type'       => 'reminder',
+            ],
+            [
+                'key' => 'followup_default',
+                'post_title' => __('Nadien (standaard)', 'event-hub'),
+                'subject'    => __('Bedankt - {event_title}', 'event-hub'),
+                'body'       => self::load_template_body('followup.html'),
+                'type'       => 'followup',
+            ],
+            [
+                'key' => 'event_cancelled_default',
+                'post_title' => __('Event geannuleerd (standaard)', 'event-hub'),
+                'subject'    => __('Event geannuleerd - {event_title}', 'event-hub'),
+                'body'       => self::load_template_body('event-cancelled.html'),
+            ],
+            [
+                'key' => 'registration_cancelled_default',
+                'post_title' => __('Inschrijving geannuleerd (standaard)', 'event-hub'),
+                'subject'    => __('Inschrijving geannuleerd - {event_title}', 'event-hub'),
+                'body'       => self::load_template_body('registration-cancelled.html'),
+            ],
+        ];
     }
 }

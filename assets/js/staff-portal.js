@@ -9,8 +9,10 @@
     const viewsUrl = root.dataset.views || '';
     const nonce = root.dataset.nonce || '';
     const events = parseJson(root.dataset.events, []);
+    const occurrences = parseJson(root.dataset.occurrences, {});
     const fieldLabels = parseJson(root.dataset.fields, {});
     const eventSelect = root.querySelector('.eh-sp-event');
+    const occurrenceSelect = root.querySelector('.eh-sp-occurrence');
     const statusEl = root.querySelector('.eh-sp-status');
     const tableHead = root.querySelector('.eh-sp-table thead');
     const tableBody = root.querySelector('.eh-sp-table tbody');
@@ -26,7 +28,11 @@
     let currentData = [];
     let currentFields = Object.keys(fieldLabels);
     let currentEventId = '';
+    let currentOccurrenceId = '';
     let savedViews = {};
+    const occurrenceAllLabel = occurrenceSelect && occurrenceSelect.querySelector('option')
+      ? occurrenceSelect.querySelector('option').textContent
+      : 'Alle datums';
 
     if (!restUrl || !eventSelect || !fieldWrap || !tableHead || !tableBody) {
       return;
@@ -57,6 +63,29 @@
       const cbs = fieldWrap.querySelectorAll('input[type="checkbox"]:checked');
       const list = Array.from(cbs).map(cb => cb.value);
       return list.length ? list : currentFields;
+    }
+
+    function updateOccurrenceSelect(eventId){
+      if (!occurrenceSelect) return;
+      const items = occurrences && eventId ? (occurrences[eventId] || []) : [];
+      occurrenceSelect.innerHTML = '';
+      const allOpt = document.createElement('option');
+      allOpt.value = '';
+      allOpt.textContent = occurrenceAllLabel;
+      occurrenceSelect.appendChild(allOpt);
+      if (!items.length) {
+        occurrenceSelect.disabled = true;
+        currentOccurrenceId = '';
+        return;
+      }
+      items.forEach((item) => {
+        const opt = document.createElement('option');
+        opt.value = item.id;
+        opt.textContent = item.label || ('#' + item.id);
+        occurrenceSelect.appendChild(opt);
+      });
+      occurrenceSelect.disabled = false;
+      currentOccurrenceId = occurrenceSelect.value || '';
     }
 
     function setStatus(msg, isError){
@@ -166,6 +195,9 @@
       const fields = getSelectedFields();
       const url = new URL(restUrl);
       url.searchParams.set('session_id', eventId);
+      if (currentOccurrenceId) {
+        url.searchParams.set('occurrence_id', currentOccurrenceId);
+      }
       fields.forEach(f => url.searchParams.append('fields[]', f));
 
       fetch(url.toString(), {
@@ -191,8 +223,18 @@
 
     eventSelect.addEventListener('change', (e) => {
       currentEventId = e.target.value;
+      updateOccurrenceSelect(currentEventId);
       fetchRegistrations(currentEventId);
     });
+
+    if (occurrenceSelect){
+      occurrenceSelect.addEventListener('change', (e) => {
+        currentOccurrenceId = e.target.value || '';
+        if (currentEventId) {
+          fetchRegistrations(currentEventId);
+        }
+      });
+    }
 
     fieldWrap.addEventListener('change', () => {
       currentFields = getSelectedFields();
@@ -315,10 +357,12 @@
     // Auto-load first event if available
     if (eventSelect.value){
       currentEventId = eventSelect.value;
+      updateOccurrenceSelect(currentEventId);
       fetchRegistrations(eventSelect.value);
     } else if (events[0]) {
       eventSelect.value = events[0].id;
       currentEventId = events[0].id;
+      updateOccurrenceSelect(currentEventId);
       fetchRegistrations(events[0].id);
     }
 

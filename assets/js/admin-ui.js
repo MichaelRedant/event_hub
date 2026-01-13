@@ -56,9 +56,19 @@
         function validateEventForm() {
             clearErrors();
             let ok = true;
-            const required = [
-                { sel: '#_eh_date_start', msg: 'Startdatum is verplicht.' },
-            ];
+            const required = [];
+            const occTable = document.getElementById('eh-occurrences-table');
+            let hasOccurrence = false;
+            if (occTable) {
+                occTable.querySelectorAll('input[name="eh_occurrences[date_start][]"]').forEach(input => {
+                    if (input.value) {
+                        hasOccurrence = true;
+                    }
+                });
+            }
+            if (!hasOccurrence) {
+                required.push({ sel: '#_eh_date_start', msg: 'Startdatum is verplicht.' });
+            }
             required.forEach(r => {
                 const el = document.querySelector(r.sel);
                 if (el && !el.value) {

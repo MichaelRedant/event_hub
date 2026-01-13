@@ -18,11 +18,21 @@ while (have_posts()) :
     the_post();
     $session_id = get_the_ID();
     $registrations = new Registrations();
-    $state = $registrations->get_capacity_state($session_id);
+    $occurrences = $registrations->get_occurrences($session_id);
+    $selected_occurrence_id = isset($_GET['eh_occurrence']) ? (int) $_GET['eh_occurrence'] : 0;
+    if (isset($_POST['occurrence_id'])) {
+        $selected_occurrence_id = (int) $_POST['occurrence_id'];
+    }
+    $selected_occurrence = $selected_occurrence_id ? $registrations->get_occurrence($session_id, $selected_occurrence_id) : null;
+    if (!$selected_occurrence && $occurrences) {
+        $selected_occurrence = $registrations->get_default_occurrence($session_id);
+    }
+    $selected_occurrence_id = $selected_occurrence ? (int) ($selected_occurrence['id'] ?? 0) : 0;
+    $state = $registrations->get_capacity_state($session_id, $selected_occurrence_id);
     $waitlist_count = $state['waitlist'] ?? 0;
     $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';
-    $date_start = get_post_meta($session_id, '_eh_date_start', true);
-    $date_end = get_post_meta($session_id, '_eh_date_end', true);
+    $date_start = $selected_occurrence ? ($selected_occurrence['date_start'] ?? '') : get_post_meta($session_id, '_eh_date_start', true);
+    $date_end = $selected_occurrence ? ($selected_occurrence['date_end'] ?? '') : get_post_meta($session_id, '_eh_date_end', true);
     $location = get_post_meta($session_id, '_eh_location', true);
     $is_online = (bool) get_post_meta($session_id, '_eh_is_online', true);
     $online_link = get_post_meta($session_id, '_eh_online_link', true);
@@ -31,8 +41,8 @@ while (have_posts()) :
     $staff = get_post_meta($session_id, '_eh_staff', true);
     $price = get_post_meta($session_id, '_eh_price', true);
     $ticket_note = get_post_meta($session_id, '_eh_ticket_note', true);
-    $booking_open = get_post_meta($session_id, '_eh_booking_open', true);
-    $booking_close = get_post_meta($session_id, '_eh_booking_close', true);
+    $booking_open = $selected_occurrence ? ($selected_occurrence['booking_open'] ?? '') : get_post_meta($session_id, '_eh_booking_open', true);
+    $booking_close = $selected_occurrence ? ($selected_occurrence['booking_close'] ?? '') : get_post_meta($session_id, '_eh_booking_close', true);
     $hide_fields = array_map('sanitize_key', (array) get_post_meta($session_id, '_eh_form_hide_fields', true));
     $extra_fields = $registrations->get_extra_fields($session_id);
     $color = sanitize_hex_color((string) get_post_meta($session_id, '_eh_color', true)) ?: '#2271b1';
@@ -130,8 +140,10 @@ while (have_posts()) :
         && wp_verify_nonce(sanitize_text_field((string) $_POST['eh_register_nonce']), 'eh_register_' . $session_id)
     ) {
         $extra_input = isset($_POST['extra']) && is_array($_POST['extra']) ? $_POST['extra'] : [];
+        $occurrence_id = isset($_POST['occurrence_id']) ? (int) $_POST['occurrence_id'] : 0;
         $data = [
             'session_id' => $session_id,
+            'occurrence_id' => $occurrence_id,
             'first_name' => sanitize_text_field($_POST['first_name'] ?? ''),
             'last_name' => sanitize_text_field($_POST['last_name'] ?? ''),
             'email' => sanitize_email($_POST['email'] ?? ''),
@@ -152,7 +164,7 @@ while (have_posts()) :
             $message = ($created && ($created['status'] ?? '') === 'waitlist')
                 ? __('Bedankt! Je staat nu op de wachtlijst.', 'event-hub')
                 : __('Bedankt! We hebben je inschrijving ontvangen.', 'event-hub');
-            $state = $registrations->get_capacity_state($session_id);
+            $state = $registrations->get_capacity_state($session_id, $occurrence_id);
             $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';
             $waitlist_count = $state['waitlist'] ?? 0;
         }
@@ -513,6 +525,41 @@ while (have_posts()) :
                 } else {
                     echo '<form method="post" class="eh-form-grid">';
                     wp_nonce_field('eh_register_' . $session_id, 'eh_register_nonce');
+                    if ($occurrences) {
+                        echo '<label>' . esc_html__('Kies datum', 'event-hub');
+                        echo '<select name="occurrence_id" required>';
+                        echo '<option value="">' . esc_html__('Maak een keuze', 'event-hub') . '</option>';
+                        foreach ($occurrences as $occ) {
+                            $occ_id = (int) ($occ['id'] ?? 0);
+                            if ($occ_id <= 0) {
+                                continue;
+                            }
+                            $occ_state = $registrations->get_capacity_state($session_id, $occ_id);
+                            $occ_start = $occ['date_start'] ?? '';
+                            $occ_end = $occ['date_end'] ?? '';
+                            $occ_date = $occ_start ? date_i18n(get_option('date_format'), strtotime($occ_start)) : '';
+                            $occ_time_start = $occ_start ? date_i18n(get_option('time_format'), strtotime($occ_start)) : '';
+                            $occ_time_end = $occ_end ? date_i18n(get_option('time_format'), strtotime($occ_end)) : '';
+                            $occ_time_range = $occ_time_start && $occ_time_end ? $occ_time_start . ' - ' . $occ_time_end : $occ_time_start;
+                            $occ_avail = $occ_state['capacity'] > 0
+                                ? sprintf(_n('%d plaats beschikbaar', '%d plaatsen beschikbaar', $occ_state['available'], 'event-hub'), $occ_state['available'])
+                                : __('Onbeperkt', 'event-hub');
+                            $occ_waitlist = $occ_state['waitlist'] > 0
+                                ? sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $occ_state['waitlist'], 'event-hub'), $occ_state['waitlist'])
+                                : __('Geen wachtlijst', 'event-hub');
+                            $label_parts = array_filter([$occ_date, $occ_time_range, $occ_avail]);
+                            $label = implode(' | ', $label_parts);
+                            $selected = selected($selected_occurrence_id, $occ_id, false);
+                            echo '<option value="' . esc_attr((string) $occ_id) . '"' . $selected
+                                . ' data-date-label="' . esc_attr($occ_date) . '"'
+                                . ' data-time-range="' . esc_attr($occ_time_range) . '"'
+                                . ' data-availability="' . esc_attr($occ_avail) . '"'
+                                . ' data-waitlist="' . esc_attr($occ_waitlist) . '"'
+                                . ' data-full="' . esc_attr($occ_state['is_full'] ? '1' : '0') . '"'
+                                . '>' . esc_html($label ?: (string) $occ_id) . '</option>';
+                        }
+                        echo '</select></label>';
+                    }
                     echo '<label>' . esc_html__('Voornaam', 'event-hub') . '<input type="text" name="first_name" required></label>';
                     echo '<label>' . esc_html__('Familienaam', 'event-hub') . '<input type="text" name="last_name" required></label>';
                     echo '<label>' . esc_html__('E-mail', 'event-hub') . '<input type="email" name="email" required></label>';
@@ -533,8 +580,8 @@ while (have_posts()) :
                         }
                     }
                     echo '<label class="eh-form-checkbox"><input type="checkbox" name="consent_marketing" value="1"><span>' . esc_html__('Ik wil relevante communicatie ontvangen.', 'event-hub') . '</span></label>';
-                    if ($state['is_full']) {
-                        echo '<label class="eh-form-checkbox"><input type="checkbox" name="waitlist_opt_in" value="1"><span>' . esc_html__('Zet me op de wachtlijst indien volzet.', 'event-hub') . '</span></label>';
+                    if ($occurrences || $state['is_full']) {
+                        echo '<label class="eh-form-checkbox" data-eventhub-waitlist-optin><input type="checkbox" name="waitlist_opt_in" value="1"><span>' . esc_html__('Zet me op de wachtlijst indien volzet.', 'event-hub') . '</span></label>';
                     }
                     echo '<button class="eh-btn" type="submit" style="background:' . esc_attr($accent ?: $color) . ';">' . esc_html($style['cta'] ?? $cta_label) . '</button>';
                     echo '</form>';

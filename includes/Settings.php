@@ -7,6 +7,7 @@ class Settings
 {
     public const OPTION = 'event_hub_email_settings';
     public const OPTION_GENERAL = 'event_hub_general_settings';
+    private static bool $sync_lock = false;
 
     public function register_settings(): void
     {
@@ -106,6 +107,11 @@ class Settings
                 'cpt_singular_label' => 'Evenement',
                 'cpt_menu_icon' => 'dashicons-calendar-alt',
                 'cpt_menu_position' => 20,
+                'linked_sync_enabled' => 0,
+                'linked_sync_mode' => 'manual',
+                'linked_sync_strategy' => 'fill_empty',
+                'linked_sync_source_cpt' => '',
+                'linked_sync_map' => [],
             ],
         ]);
 
@@ -313,6 +319,66 @@ class Settings
             echo '<p class="description">' . esc_html__('Hoe hoger, hoe strenger de spamfilter (standaard 0.5).', 'event-hub') . '</p>';
         }, self::OPTION_GENERAL, 'eh_general_main');
 
+        add_settings_section('eh_cpt_sync', __('CPT sync', 'event-hub'), function () {
+            echo '<p>' . esc_html__('Koppel een extern events-CPT aan Event Hub en synchroniseer velden om dubbel invullen te vermijden.', 'event-hub') . '</p>';
+        }, self::OPTION_GENERAL);
+
+        add_settings_field('linked_sync_enabled', __('Sync inschakelen', 'event-hub'), function () {
+            $opts = get_option(self::OPTION_GENERAL, []);
+            $name = self::OPTION_GENERAL . '[linked_sync_enabled]';
+            $checked = !empty($opts['linked_sync_enabled']) ? 'checked' : '';
+            echo '<label><input type="checkbox" name="' . esc_attr($name) . '" value="1" ' . $checked . ' /> ' . esc_html__('Activeer synchronisatie van gekoppelde events.', 'event-hub') . '</label>';
+        }, self::OPTION_GENERAL, 'eh_cpt_sync');
+
+        add_settings_field('linked_sync_source_cpt', __('Bron CPT-slug', 'event-hub'), function () {
+            $opts = get_option(self::OPTION_GENERAL, []);
+            $val = $opts['linked_sync_source_cpt'] ?? '';
+            $name = self::OPTION_GENERAL . '[linked_sync_source_cpt]';
+            $post_types = get_post_types(['show_ui' => true], 'objects');
+            $datalist_id = 'eh_sync_cpt_list';
+            echo '<input type="text" class="regular-text" list="' . esc_attr($datalist_id) . '" name="' . esc_attr($name) . '" value="' . esc_attr((string) $val) . '" placeholder="bv. evenementen" />';
+            echo '<datalist id="' . esc_attr($datalist_id) . '">';
+            foreach ($post_types as $pt) {
+                $label = isset($pt->labels->singular_name) ? $pt->labels->singular_name : $pt->name;
+                echo '<option value="' . esc_attr($pt->name) . '">' . esc_html($label) . '</option>';
+            }
+            echo '</datalist>';
+            echo '<p class="description">' . esc_html__('Kies het externe CPT dat je wilt synchroniseren.', 'event-hub') . '</p>';
+        }, self::OPTION_GENERAL, 'eh_cpt_sync');
+
+        add_settings_field('linked_sync_mode', __('Sync moment', 'event-hub'), function () {
+            $opts = get_option(self::OPTION_GENERAL, []);
+            $val = $opts['linked_sync_mode'] ?? 'manual';
+            $name = self::OPTION_GENERAL . '[linked_sync_mode]';
+            $options = [
+                'manual' => __('Alleen handmatig', 'event-hub'),
+                'on_save' => __('Automatisch bij opslaan van bron CPT', 'event-hub'),
+            ];
+            echo '<select name="' . esc_attr($name) . '">';
+            foreach ($options as $key => $label) {
+                echo '<option value="' . esc_attr($key) . '"' . selected($val, $key, false) . '>' . esc_html($label) . '</option>';
+            }
+            echo '</select>';
+        }, self::OPTION_GENERAL, 'eh_cpt_sync');
+
+        add_settings_field('linked_sync_strategy', __('Conflictstrategie', 'event-hub'), function () {
+            $opts = get_option(self::OPTION_GENERAL, []);
+            $val = $opts['linked_sync_strategy'] ?? 'fill_empty';
+            $name = self::OPTION_GENERAL . '[linked_sync_strategy]';
+            $options = [
+                'fill_empty' => __('Vul alleen lege velden in Event Hub', 'event-hub'),
+                'overwrite' => __('Overschrijf Event Hub velden met brondata', 'event-hub'),
+            ];
+            echo '<select name="' . esc_attr($name) . '">';
+            foreach ($options as $key => $label) {
+                echo '<option value="' . esc_attr($key) . '"' . selected($val, $key, false) . '>' . esc_html($label) . '</option>';
+            }
+            echo '</select>';
+        }, self::OPTION_GENERAL, 'eh_cpt_sync');
+
+        add_settings_field('linked_sync_map', __('Veldkoppeling', 'event-hub'), [$this, 'render_sync_map_field'], self::OPTION_GENERAL, 'eh_cpt_sync');
+        add_settings_field('linked_sync_actions', __('Handmatige import', 'event-hub'), [$this, 'render_sync_actions_field'], self::OPTION_GENERAL, 'eh_cpt_sync');
+
         add_settings_field('colleagues', __('Collega\'s', 'event-hub'), function () {
             $opts = get_option(self::OPTION_GENERAL, []);
             $colleagues = isset($opts['colleagues']) && is_array($opts['colleagues']) ? $opts['colleagues'] : [];
@@ -518,6 +584,731 @@ class Settings
         echo '</div>';
     }
 
+    public function render_sync_map_field(): void
+    {
+        $opts = get_option(self::OPTION_GENERAL, []);
+        $map = isset($opts['linked_sync_map']) && is_array($opts['linked_sync_map']) ? $opts['linked_sync_map'] : [];
+        $defs = $this->get_sync_field_definitions();
+        $base = self::OPTION_GENERAL . '[linked_sync_map]';
+        $post_field_hint = esc_html__('Postvelden: title, content, excerpt, date, modified, slug, status.', 'event-hub');
+        echo '<table class="widefat striped" style="max-width:980px;">';
+        echo '<thead><tr><th>' . esc_html__('Event Hub veld', 'event-hub') . '</th><th>' . esc_html__('Bron type', 'event-hub') . '</th><th>' . esc_html__('Bron veld/meta key', 'event-hub') . '</th></tr></thead>';
+        echo '<tbody>';
+        foreach ($defs as $field_key => $def) {
+            $row = isset($map[$field_key]) && is_array($map[$field_key]) ? $map[$field_key] : [];
+            $source = $row['source'] ?? '';
+            $key = $row['key'] ?? '';
+            $name = $base . '[' . $field_key . ']';
+            echo '<tr>';
+            echo '<td><strong>' . esc_html($def['label']) . '</strong><br><span class="description">' . esc_html($field_key) . '</span></td>';
+            echo '<td>';
+            echo '<select name="' . esc_attr($name . '[source]') . '">';
+            echo '<option value="">' . esc_html__('Niet koppelen', 'event-hub') . '</option>';
+            echo '<option value="post"' . selected($source, 'post', false) . '>' . esc_html__('Postveld', 'event-hub') . '</option>';
+            echo '<option value="meta"' . selected($source, 'meta', false) . '>' . esc_html__('Meta key', 'event-hub') . '</option>';
+            echo '</select>';
+            echo '</td>';
+            echo '<td>';
+            echo '<input type="text" class="regular-text" name="' . esc_attr($name . '[key]') . '" value="' . esc_attr((string) $key) . '" placeholder="' . esc_attr($def['placeholder']) . '" />';
+            echo '</td>';
+            echo '</tr>';
+        }
+        echo '</tbody>';
+        echo '</table>';
+        echo '<p class="description">' . $post_field_hint . '</p>';
+    }
+
+    public function render_sync_actions_field(): void
+    {
+        $opts = get_option(self::OPTION_GENERAL, []);
+        $source_cpt = $opts['linked_sync_source_cpt'] ?? '';
+        $btn_label = esc_html__('Importeer & synchroniseer nu', 'event-hub');
+        $sync_url = wp_nonce_url(
+            add_query_arg(['action' => 'event_hub_sync_linked_events', 'sync_action' => 'import'], admin_url('admin-post.php')),
+            'event_hub_linked_sync',
+            'event_hub_linked_sync_nonce'
+        );
+        if ($source_cpt) {
+            echo '<a class="button button-secondary" href="' . esc_url($sync_url) . '">' . $btn_label . '</a>';
+        } else {
+            echo '<button type="button" class="button button-secondary" disabled>' . $btn_label . '</button>';
+        }
+        echo '<p class="description">' . esc_html__('Maakt Event Hub events aan voor alle items in de bron-CPT en synchroniseert velden volgens de mapping. Bestaande koppelingen worden hergebruikt.', 'event-hub') . '</p>';
+    }
+
+    /**
+     * @return array<string,array{label:string,target:string,type:string,placeholder:string,meta_key?:string,post_field?:string}>
+     */
+    private function get_sync_field_definitions(): array
+    {
+        return [
+            'post_title' => [
+                'label' => __('Titel', 'event-hub'),
+                'target' => 'post',
+                'post_field' => 'post_title',
+                'type' => 'text',
+                'placeholder' => 'title',
+            ],
+            'post_content' => [
+                'label' => __('Inhoud', 'event-hub'),
+                'target' => 'post',
+                'post_field' => 'post_content',
+                'type' => 'html',
+                'placeholder' => 'content',
+            ],
+            'post_excerpt' => [
+                'label' => __('Samenvatting', 'event-hub'),
+                'target' => 'post',
+                'post_field' => 'post_excerpt',
+                'type' => 'text',
+                'placeholder' => 'excerpt',
+            ],
+            '_eh_date_start' => [
+                'label' => __('Startdatum', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_date_start',
+                'type' => 'datetime',
+                'placeholder' => 'start_date',
+            ],
+            '_eh_date_end' => [
+                'label' => __('Einddatum', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_date_end',
+                'type' => 'datetime',
+                'placeholder' => 'end_date',
+            ],
+            '_eh_booking_open' => [
+                'label' => __('Boekingen openen', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_booking_open',
+                'type' => 'datetime',
+                'placeholder' => 'booking_open',
+            ],
+            '_eh_booking_close' => [
+                'label' => __('Boekingen sluiten', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_booking_close',
+                'type' => 'datetime',
+                'placeholder' => 'booking_close',
+            ],
+            '_eh_location' => [
+                'label' => __('Locatie', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_location',
+                'type' => 'text',
+                'placeholder' => 'location',
+            ],
+            '_eh_address' => [
+                'label' => __('Adres', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_address',
+                'type' => 'text',
+                'placeholder' => 'address',
+            ],
+            '_eh_is_online' => [
+                'label' => __('Online event', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_is_online',
+                'type' => 'bool',
+                'placeholder' => 'is_online',
+            ],
+            '_eh_online_link' => [
+                'label' => __('Onlinelink', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_online_link',
+                'type' => 'url',
+                'placeholder' => 'online_link',
+            ],
+            '_eh_capacity' => [
+                'label' => __('Capaciteit', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_capacity',
+                'type' => 'int',
+                'placeholder' => 'capacity',
+            ],
+            '_eh_price' => [
+                'label' => __('Prijs', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_price',
+                'type' => 'float',
+                'placeholder' => 'price',
+            ],
+            '_eh_no_show_fee' => [
+                'label' => __('No-show fee', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_no_show_fee',
+                'type' => 'float',
+                'placeholder' => 'no_show_fee',
+            ],
+            '_eh_ticket_note' => [
+                'label' => __('Ticket info', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_ticket_note',
+                'type' => 'html',
+                'placeholder' => 'ticket_note',
+            ],
+            '_eh_color' => [
+                'label' => __('Accentkleur', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_color',
+                'type' => 'color',
+                'placeholder' => 'color',
+            ],
+            '_eh_agenda' => [
+                'label' => __('Agenda', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_agenda',
+                'type' => 'html',
+                'placeholder' => 'agenda',
+            ],
+            '_eh_language' => [
+                'label' => __('Taal', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_language',
+                'type' => 'text',
+                'placeholder' => 'language',
+            ],
+            '_eh_target_audience' => [
+                'label' => __('Doelgroep', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_target_audience',
+                'type' => 'text',
+                'placeholder' => 'audience',
+            ],
+            '_eh_organizer' => [
+                'label' => __('Organisator', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_organizer',
+                'type' => 'text',
+                'placeholder' => 'organizer',
+            ],
+            '_eh_staff' => [
+                'label' => __('Sprekers/team', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_staff',
+                'type' => 'text',
+                'placeholder' => 'staff',
+            ],
+            '_eh_show_on_site' => [
+                'label' => __('Toon op site', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_show_on_site',
+                'type' => 'bool',
+                'placeholder' => 'show_on_site',
+            ],
+            '_eh_status' => [
+                'label' => __('Status', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_status',
+                'type' => 'text',
+                'placeholder' => 'status',
+            ],
+            '_eh_hero_image_override' => [
+                'label' => __('Hero afbeelding (URL)', 'event-hub'),
+                'target' => 'meta',
+                'meta_key' => '_eh_hero_image_override',
+                'type' => 'url',
+                'placeholder' => 'hero_image',
+            ],
+        ];
+    }
+
+    private function sanitize_sync_map($input): array
+    {
+        if (!is_array($input)) {
+            return [];
+        }
+        $defs = $this->get_sync_field_definitions();
+        $allowed_post_fields = ['title', 'content', 'excerpt', 'date', 'modified', 'slug', 'status'];
+        $out = [];
+        foreach ($defs as $field_key => $def) {
+            if (empty($input[$field_key]) || !is_array($input[$field_key])) {
+                continue;
+            }
+            $source = sanitize_key((string) ($input[$field_key]['source'] ?? ''));
+            $key = sanitize_text_field((string) ($input[$field_key]['key'] ?? ''));
+            if ($source === '' || $key === '') {
+                continue;
+            }
+            if ($source === 'post') {
+                $key = sanitize_key($key);
+                if (!in_array($key, $allowed_post_fields, true)) {
+                    continue;
+                }
+            } elseif ($source === 'meta') {
+                $key = sanitize_key($key);
+            } else {
+                continue;
+            }
+            $out[$field_key] = [
+                'source' => $source,
+                'key' => $key,
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * @return array{enabled:bool,mode:string,strategy:string,source_cpt:string,map:array}
+     */
+    private function get_sync_settings(): array
+    {
+        $opts = self::get_general();
+        $map = isset($opts['linked_sync_map']) && is_array($opts['linked_sync_map']) ? $opts['linked_sync_map'] : [];
+        return [
+            'enabled' => !empty($opts['linked_sync_enabled']),
+            'mode' => $opts['linked_sync_mode'] ?? 'manual',
+            'strategy' => $opts['linked_sync_strategy'] ?? 'fill_empty',
+            'source_cpt' => sanitize_key((string) ($opts['linked_sync_source_cpt'] ?? '')),
+            'map' => $map,
+        ];
+    }
+
+    public function maybe_sync_from_linked_event(int $post_id, \WP_Post $post, bool $update): void
+    {
+        if (self::$sync_lock) {
+            return;
+        }
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE) {
+            return;
+        }
+        if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
+            return;
+        }
+        if (self::use_external_cpt()) {
+            return;
+        }
+        $settings = $this->get_sync_settings();
+        if (!$settings['enabled'] || $settings['mode'] !== 'on_save') {
+            return;
+        }
+        if ($settings['source_cpt'] === '' || $post->post_type !== $settings['source_cpt']) {
+            return;
+        }
+        if (empty($settings['map'])) {
+            return;
+        }
+
+        $session_id = (int) get_post_meta($post_id, '_eh_linked_session_id', true);
+        if ($session_id <= 0) {
+            $session_id = $this->find_session_by_linked_event($post_id, $settings['source_cpt']);
+        }
+        if ($session_id <= 0) {
+            return;
+        }
+
+        $changes = $this->sync_linked_post_to_session($post_id, $session_id, $settings);
+        if ($changes > 0) {
+            $logger = new Logger();
+            $logger->log('linked_sync', 'Event sync uitgevoerd op save.', [
+                'source_id' => $post_id,
+                'session_id' => $session_id,
+                'changes' => $changes,
+            ]);
+        }
+    }
+
+    public function handle_linked_sync_action(): void
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
+        }
+        $nonce = $_POST['event_hub_linked_sync_nonce'] ?? $_GET['event_hub_linked_sync_nonce'] ?? '';
+        if (empty($nonce) || !wp_verify_nonce(sanitize_text_field((string) $nonce), 'event_hub_linked_sync')) {
+            wp_die(__('Ongeldige aanvraag.', 'event-hub'));
+        }
+        if (self::use_external_cpt()) {
+            set_transient('event_hub_sync_notice', [
+                'type' => 'error',
+                'message' => __('Sync is niet nodig wanneer je Event Hub op een externe CPT laat draaien.', 'event-hub'),
+            ], 60);
+            wp_safe_redirect(add_query_arg(['page' => 'event-hub-general'], admin_url('admin.php')));
+            exit;
+        }
+
+        $settings = $this->get_sync_settings();
+        if ($settings['source_cpt'] === '' || !post_type_exists($settings['source_cpt'])) {
+            set_transient('event_hub_sync_notice', [
+                'type' => 'error',
+                'message' => __('Bron CPT is niet ingesteld of bestaat niet.', 'event-hub'),
+            ], 60);
+            wp_safe_redirect(add_query_arg(['page' => 'event-hub-general'], admin_url('admin.php')));
+            exit;
+        }
+        if (empty($settings['map'])) {
+            set_transient('event_hub_sync_notice', [
+                'type' => 'error',
+                'message' => __('Stel eerst veldkoppelingen in voordat je importeert.', 'event-hub'),
+            ], 60);
+            wp_safe_redirect(add_query_arg(['page' => 'event-hub-general'], admin_url('admin.php')));
+            exit;
+        }
+
+        $result = $this->run_linked_import($settings);
+        set_transient('event_hub_sync_notice', $result, 60);
+        wp_safe_redirect(add_query_arg(['page' => 'event-hub-general'], admin_url('admin.php')));
+        exit;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function run_linked_import(array $settings): array
+    {
+        $stats = [
+            'type' => 'success',
+            'message' => __('Sync afgerond.', 'event-hub'),
+            'created' => 0,
+            'updated' => 0,
+            'skipped' => 0,
+            'errors' => 0,
+        ];
+
+        $source_cpt = $settings['source_cpt'];
+        $post_ids = get_posts([
+            'post_type' => $source_cpt,
+            'post_status' => ['publish', 'future'],
+            'posts_per_page' => -1,
+            'fields' => 'ids',
+        ]);
+
+        if (!$post_ids) {
+            $stats['message'] = __('Geen events gevonden in het bron CPT.', 'event-hub');
+            return $stats;
+        }
+
+        foreach ($post_ids as $source_id) {
+            $source_id = (int) $source_id;
+            $source_post = get_post($source_id);
+            if (!$source_post) {
+                $stats['errors']++;
+                continue;
+            }
+
+            $session_id = (int) get_post_meta($source_id, '_eh_linked_session_id', true);
+            if ($session_id <= 0) {
+                $session_id = $this->find_session_by_linked_event($source_id, $source_cpt);
+            }
+
+            $created = false;
+            if ($session_id <= 0) {
+                $session_id = wp_insert_post([
+                    'post_type' => self::get_cpt_slug(),
+                    'post_status' => $source_post->post_status === 'future' ? 'future' : 'publish',
+                    'post_title' => $source_post->post_title,
+                    'post_content' => $source_post->post_content,
+                    'post_excerpt' => $source_post->post_excerpt,
+                ], true);
+                if (is_wp_error($session_id)) {
+                    $stats['errors']++;
+                    continue;
+                }
+                $created = true;
+                $stats['created']++;
+                update_post_meta((int) $session_id, '_eh_linked_event_id', $source_id);
+                update_post_meta((int) $session_id, '_eh_linked_event_cpt', $source_cpt);
+                update_post_meta($source_id, '_eh_linked_session_id', (int) $session_id);
+            }
+
+            $changes = $this->sync_linked_post_to_session($source_id, (int) $session_id, $settings);
+            if ($changes > 0) {
+                $stats['updated']++;
+            } elseif (!$created) {
+                $stats['skipped']++;
+            }
+        }
+
+        $logger = new Logger();
+        $logger->log('linked_sync', 'Handmatige import uitgevoerd.', [
+            'source_cpt' => $source_cpt,
+            'created' => $stats['created'],
+            'updated' => $stats['updated'],
+            'skipped' => $stats['skipped'],
+            'errors' => $stats['errors'],
+        ]);
+
+        return $stats;
+    }
+
+    private function sync_linked_post_to_session(int $source_post_id, int $session_id, array $settings): int
+    {
+        $defs = $this->get_sync_field_definitions();
+        $map = $settings['map'] ?? [];
+        if (!$defs || !$map) {
+            return 0;
+        }
+
+        $source_post = get_post($source_post_id);
+        $session_post = get_post($session_id);
+        if (!$source_post || !$session_post) {
+            return 0;
+        }
+
+        $overwrite = ($settings['strategy'] ?? 'fill_empty') === 'overwrite';
+        $post_updates = [];
+        $changes = 0;
+
+        foreach ($defs as $field_key => $def) {
+            if (empty($map[$field_key]) || !is_array($map[$field_key])) {
+                continue;
+            }
+            $source_type = $map[$field_key]['source'] ?? '';
+            $source_key = $map[$field_key]['key'] ?? '';
+            if ($source_type === '' || $source_key === '') {
+                continue;
+            }
+
+            $source_value = $this->resolve_source_value($source_post_id, $source_post, $source_type, $source_key);
+            if ($source_value === null || $source_value === '') {
+                continue;
+            }
+
+            $normalized = $this->normalize_sync_value($source_value, $def['type']);
+            if ($normalized === null) {
+                continue;
+            }
+            if ($normalized === '' && !in_array($def['type'], ['bool', 'int', 'float'], true)) {
+                continue;
+            }
+
+            if ($def['target'] === 'post') {
+                $post_field = $def['post_field'] ?? '';
+                if ($post_field === '') {
+                    continue;
+                }
+                $current = $session_post->$post_field ?? '';
+                if (!$overwrite && !$this->is_empty_target($current, $def['type'])) {
+                    continue;
+                }
+                if ($this->values_equal($current, $normalized, $def['type'])) {
+                    continue;
+                }
+                $post_updates[$post_field] = $normalized;
+                $changes++;
+                continue;
+            }
+
+            $meta_key = $def['meta_key'] ?? '';
+            if ($meta_key === '') {
+                continue;
+            }
+            $current = get_post_meta($session_id, $meta_key, true);
+            if (!$overwrite && !$this->is_empty_target($current, $def['type'])) {
+                continue;
+            }
+            if ($this->values_equal($current, $normalized, $def['type'])) {
+                continue;
+            }
+            update_post_meta($session_id, $meta_key, $normalized);
+            $changes++;
+        }
+
+        if ($post_updates) {
+            $post_updates['ID'] = $session_id;
+            self::$sync_lock = true;
+            wp_update_post($post_updates);
+            self::$sync_lock = false;
+        }
+
+        update_post_meta($session_id, '_eh_linked_event_id', $source_post_id);
+        if (!empty($settings['source_cpt'])) {
+            update_post_meta($session_id, '_eh_linked_event_cpt', $settings['source_cpt']);
+        }
+        update_post_meta($source_post_id, '_eh_linked_session_id', $session_id);
+
+        return $changes;
+    }
+
+    private function find_session_by_linked_event(int $source_post_id, string $source_cpt): int
+    {
+        $args = [
+            'post_type' => self::get_cpt_slug(),
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_query' => [
+                [
+                    'key' => '_eh_linked_event_id',
+                    'value' => $source_post_id,
+                    'compare' => '=',
+                ],
+            ],
+        ];
+        if ($source_cpt !== '') {
+            $args['meta_query'][] = [
+                'key' => '_eh_linked_event_cpt',
+                'value' => $source_cpt,
+                'compare' => '=',
+            ];
+        }
+        $query = new \WP_Query($args);
+        if ($query->have_posts()) {
+            return (int) $query->posts[0];
+        }
+
+        if ($source_cpt !== '') {
+            $fallback = new \WP_Query([
+                'post_type' => self::get_cpt_slug(),
+                'posts_per_page' => 1,
+                'fields' => 'ids',
+                'meta_query' => [
+                    [
+                        'key' => '_eh_linked_event_id',
+                        'value' => $source_post_id,
+                        'compare' => '=',
+                    ],
+                ],
+            ]);
+            if ($fallback->have_posts()) {
+                return (int) $fallback->posts[0];
+            }
+        }
+
+        return 0;
+    }
+
+    private function resolve_source_value(int $source_post_id, \WP_Post $source_post, string $source_type, string $key)
+    {
+        if ($source_type === 'meta') {
+            return get_post_meta($source_post_id, $key, true);
+        }
+        if ($source_type === 'post') {
+            switch ($key) {
+                case 'title':
+                    return $source_post->post_title;
+                case 'content':
+                    return $source_post->post_content;
+                case 'excerpt':
+                    return $source_post->post_excerpt;
+                case 'date':
+                    return $source_post->post_date;
+                case 'modified':
+                    return $source_post->post_modified;
+                case 'slug':
+                    return $source_post->post_name;
+                case 'status':
+                    return $source_post->post_status;
+                default:
+                    return null;
+            }
+        }
+        return null;
+    }
+
+    private function normalize_sync_value($value, string $type)
+    {
+        if (is_array($value)) {
+            $value = wp_json_encode($value);
+        }
+        if (is_object($value)) {
+            $value = wp_json_encode($value);
+        }
+        switch ($type) {
+            case 'datetime':
+                return $this->normalize_datetime($value);
+            case 'int':
+                if ($value === '' || $value === null) {
+                    return null;
+                }
+                return (int) $value;
+            case 'float':
+                if ($value === '' || $value === null) {
+                    return null;
+                }
+                return (float) $value;
+            case 'bool':
+                if (is_string($value)) {
+                    $lower = strtolower(trim($value));
+                    if (in_array($lower, ['0', 'false', 'nee', 'no', 'off', ''], true)) {
+                        return 0;
+                    }
+                    return 1;
+                }
+                return $value ? 1 : 0;
+            case 'url':
+                return esc_url_raw((string) $value);
+            case 'color':
+                return sanitize_hex_color((string) $value) ?: '';
+            case 'html':
+                return wp_kses_post((string) $value);
+            case 'text':
+            default:
+                return sanitize_text_field((string) $value);
+        }
+    }
+
+    private function normalize_datetime($value): string
+    {
+        if ($value === null || $value === '') {
+            return '';
+        }
+        if (is_numeric($value)) {
+            $ts = (int) $value;
+        } else {
+            $ts = strtotime((string) $value);
+        }
+        if (!$ts) {
+            return '';
+        }
+        return gmdate('Y-m-d H:i:00', $ts);
+    }
+
+    private function is_empty_target($value, string $type): bool
+    {
+        if ($value === null) {
+            return true;
+        }
+        if (is_string($value)) {
+            return trim($value) === '';
+        }
+        if (is_array($value)) {
+            return empty($value);
+        }
+        if (is_numeric($value) || is_bool($value)) {
+            return false;
+        }
+        return empty($value);
+    }
+
+    private function values_equal($current, $next, string $type): bool
+    {
+        switch ($type) {
+            case 'int':
+            case 'bool':
+                return (int) $current === (int) $next;
+            case 'float':
+                return (float) $current === (float) $next;
+            default:
+                return (string) $current === (string) $next;
+        }
+    }
+
+    public function maybe_notice_linked_sync(): void
+    {
+        if (!is_admin()) {
+            return;
+        }
+        if (!isset($_GET['page']) || $_GET['page'] !== 'event-hub-general') {
+            return;
+        }
+        $notice = get_transient('event_hub_sync_notice');
+        if (!$notice || !is_array($notice)) {
+            return;
+        }
+        delete_transient('event_hub_sync_notice');
+        $type = ($notice['type'] ?? '') === 'error' ? 'notice-error' : 'notice-success';
+        $message = $notice['message'] ?? '';
+        $counts = [];
+        foreach (['created' => __('Aangemaakt', 'event-hub'), 'updated' => __('Bijgewerkt', 'event-hub'), 'skipped' => __('Overgeslagen', 'event-hub'), 'errors' => __('Fouten', 'event-hub')] as $key => $label) {
+            if (isset($notice[$key])) {
+                $counts[] = $label . ': ' . (int) $notice[$key];
+            }
+        }
+        if ($counts) {
+            $message .= ' ' . implode(' | ', $counts);
+        }
+        echo '<div class="notice ' . esc_attr($type) . '"><p>' . esc_html(trim($message)) . '</p></div>';
+    }
+
     public function sanitize_settings($input): array
     {
         $out = [];
@@ -597,6 +1388,14 @@ class Settings
         $out['recaptcha_secret_key'] = isset($input['recaptcha_secret_key']) ? sanitize_text_field((string) $input['recaptcha_secret_key']) : '';
         $score = isset($input['recaptcha_score']) ? (float) $input['recaptcha_score'] : 0.5;
         $out['recaptcha_score'] = ($score >= 0 && $score <= 1) ? $score : 0.5;
+        $out['linked_sync_enabled'] = !empty($input['linked_sync_enabled']) ? 1 : 0;
+        $mode = $input['linked_sync_mode'] ?? 'manual';
+        $out['linked_sync_mode'] = in_array($mode, ['manual', 'on_save'], true) ? $mode : 'manual';
+        $strategy = $input['linked_sync_strategy'] ?? 'fill_empty';
+        $out['linked_sync_strategy'] = in_array($strategy, ['fill_empty', 'overwrite'], true) ? $strategy : 'fill_empty';
+        $source_cpt = isset($input['linked_sync_source_cpt']) ? sanitize_key((string) $input['linked_sync_source_cpt']) : '';
+        $out['linked_sync_source_cpt'] = $source_cpt !== '' ? self::resolve_post_type_slug($source_cpt) : '';
+        $out['linked_sync_map'] = $this->sanitize_sync_map($input['linked_sync_map'] ?? []);
         $out['colleagues'] = [];
         if (isset($input['colleagues']) && is_array($input['colleagues'])) {
             foreach ($input['colleagues'] as $row) {
@@ -651,6 +1450,11 @@ class Settings
             'recaptcha_site_key' => '',
             'recaptcha_secret_key' => '',
             'recaptcha_score' => 0.5,
+            'linked_sync_enabled' => 0,
+            'linked_sync_mode' => 'manual',
+            'linked_sync_strategy' => 'fill_empty',
+            'linked_sync_source_cpt' => '',
+            'linked_sync_map' => [],
         ];
         $opts = get_option(self::OPTION_GENERAL, []);
         return wp_parse_args($opts, $defaults);

@@ -753,8 +753,18 @@ class Widget_Session_Detail extends Widget_Base
     {
         $title = get_the_title($session_id);
         $content = apply_filters('the_content', get_post_field('post_content', $session_id));
-        $start = get_post_meta($session_id, '_eh_date_start', true);
-        $end = get_post_meta($session_id, '_eh_date_end', true);
+        $occurrences = $this->registrations->get_occurrences($session_id);
+        $selected_occurrence_id = isset($_GET['eh_occurrence']) ? (int) $_GET['eh_occurrence'] : 0;
+        if (isset($_POST['occurrence_id'])) {
+            $selected_occurrence_id = (int) $_POST['occurrence_id'];
+        }
+        $selected_occurrence = $selected_occurrence_id ? $this->registrations->get_occurrence($session_id, $selected_occurrence_id) : null;
+        if (!$selected_occurrence && $occurrences) {
+            $selected_occurrence = $this->registrations->get_default_occurrence($session_id);
+        }
+        $selected_occurrence_id = $selected_occurrence ? (int) ($selected_occurrence['id'] ?? 0) : 0;
+        $start = $selected_occurrence ? ($selected_occurrence['date_start'] ?? '') : get_post_meta($session_id, '_eh_date_start', true);
+        $end = $selected_occurrence ? ($selected_occurrence['date_end'] ?? '') : get_post_meta($session_id, '_eh_date_end', true);
         $location = get_post_meta($session_id, '_eh_location', true);
         $is_online = (bool) get_post_meta($session_id, '_eh_is_online', true);
         $online_link = get_post_meta($session_id, '_eh_online_link', true);
@@ -780,7 +790,7 @@ class Widget_Session_Detail extends Widget_Base
         $enable_module_meta = get_post_meta($session_id, '_eh_enable_module', true);
         $module_enabled = ($enable_module_meta === '') ? true : (bool) $enable_module_meta;
 
-        $state = $this->registrations->get_capacity_state($session_id);
+        $state = $this->registrations->get_capacity_state($session_id, $selected_occurrence_id);
         $capacity = $state['capacity'];
         $available = $state['available'];
         $is_full = $state['is_full'];
@@ -854,12 +864,22 @@ class Widget_Session_Detail extends Widget_Base
     protected function render_registration_form(int $session_id, array $settings): void
     {
         $status = get_post_meta($session_id, '_eh_status', true) ?: 'open';
-        $state = $this->registrations->get_capacity_state($session_id);
+        $occurrences = $this->registrations->get_occurrences($session_id);
+        $selected_occurrence_id = isset($_GET['eh_occurrence']) ? (int) $_GET['eh_occurrence'] : 0;
+        if (isset($_POST['occurrence_id'])) {
+            $selected_occurrence_id = (int) $_POST['occurrence_id'];
+        }
+        $selected_occurrence = $selected_occurrence_id ? $this->registrations->get_occurrence($session_id, $selected_occurrence_id) : null;
+        if (!$selected_occurrence && $occurrences) {
+            $selected_occurrence = $this->registrations->get_default_occurrence($session_id);
+        }
+        $selected_occurrence_id = $selected_occurrence ? (int) ($selected_occurrence['id'] ?? 0) : 0;
+        $state = $this->registrations->get_capacity_state($session_id, $selected_occurrence_id);
         $capacity = $state['capacity'];
         $is_full = $state['is_full'];
-        $booking_open = get_post_meta($session_id, '_eh_booking_open', true);
-        $booking_close = get_post_meta($session_id, '_eh_booking_close', true);
-        $event_start = get_post_meta($session_id, '_eh_date_start', true);
+        $booking_open = $selected_occurrence ? ($selected_occurrence['booking_open'] ?? '') : get_post_meta($session_id, '_eh_booking_open', true);
+        $booking_close = $selected_occurrence ? ($selected_occurrence['booking_close'] ?? '') : get_post_meta($session_id, '_eh_booking_close', true);
+        $event_start = $selected_occurrence ? ($selected_occurrence['date_start'] ?? '') : get_post_meta($session_id, '_eh_date_start', true);
         $now = current_time('timestamp');
 
         $hide_when_closed = !empty($settings['hide_when_closed']) && $settings['hide_when_closed'] === 'yes';
@@ -939,6 +959,41 @@ class Widget_Session_Detail extends Widget_Base
         echo '<form method="post" class="eh-form" data-ehevent="' . esc_attr((string) $session_id) . '">';
         echo '<div class="field" style="display:none !important;"><label>' . esc_html__('Laat leeg', 'event-hub') . '</label><input type="text" name="_eh_hp" value=""></div>';
         echo '<input type="hidden" name="session_id" value="' . esc_attr((string) $session_id) . '" />';
+        if ($occurrences) {
+            echo '<div class="field full"><label for="occurrence_id">' . esc_html__('Kies datum', 'event-hub') . ' *</label>';
+            echo '<select name="occurrence_id" id="occurrence_id" required>';
+            echo '<option value="">' . esc_html__('Maak een keuze', 'event-hub') . '</option>';
+            foreach ($occurrences as $occ) {
+                $occ_id = (int) ($occ['id'] ?? 0);
+                if ($occ_id <= 0) {
+                    continue;
+                }
+                $occ_state = $this->registrations->get_capacity_state($session_id, $occ_id);
+                $occ_start = $occ['date_start'] ?? '';
+                $occ_end = $occ['date_end'] ?? '';
+                $occ_date = $occ_start ? date_i18n(get_option('date_format'), strtotime($occ_start)) : '';
+                $occ_time_start = $occ_start ? date_i18n(get_option('time_format'), strtotime($occ_start)) : '';
+                $occ_time_end = $occ_end ? date_i18n(get_option('time_format'), strtotime($occ_end)) : '';
+                $occ_time_range = $occ_time_start && $occ_time_end ? $occ_time_start . ' - ' . $occ_time_end : $occ_time_start;
+                $occ_avail = $occ_state['capacity'] > 0
+                    ? sprintf(_n('%d plaats beschikbaar', '%d plaatsen beschikbaar', $occ_state['available'], 'event-hub'), $occ_state['available'])
+                    : __('Onbeperkt', 'event-hub');
+                $occ_waitlist = $occ_state['waitlist'] > 0
+                    ? sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $occ_state['waitlist'], 'event-hub'), $occ_state['waitlist'])
+                    : __('Geen wachtlijst', 'event-hub');
+                $label_parts = array_filter([$occ_date, $occ_time_range, $occ_avail]);
+                $label = implode(' | ', $label_parts);
+                $selected = selected($selected_occurrence_id, $occ_id, false);
+                echo '<option value="' . esc_attr((string) $occ_id) . '"' . $selected
+                    . ' data-date-label="' . esc_attr($occ_date) . '"'
+                    . ' data-time-range="' . esc_attr($occ_time_range) . '"'
+                    . ' data-availability="' . esc_attr($occ_avail) . '"'
+                    . ' data-waitlist="' . esc_attr($occ_waitlist) . '"'
+                    . ' data-full="' . esc_attr($occ_state['is_full'] ? '1' : '0') . '"'
+                    . '>' . esc_html($label ?: (string) $occ_id) . '</option>';
+            }
+            echo '</select></div>';
+        }
         if ($waitlist_mode) {
             echo '<input type="hidden" name="waitlist_opt_in" value="1" />';
         }

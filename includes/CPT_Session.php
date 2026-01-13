@@ -116,6 +116,14 @@ class CPT_Session
             'default'
         );
         add_meta_box(
+            'eh_occurrences',
+            __('Meerdere datums', 'event-hub'),
+            [$this, 'render_occurrences_meta_box'],
+            $this->get_cpt(),
+            'normal',
+            'default'
+        );
+        add_meta_box(
             'eh_extra_fields',
             __('Extra formulier-velden', 'event-hub'),
             [$this, 'render_extra_fields_meta_box'],
@@ -222,6 +230,92 @@ class CPT_Session
         echo $rawOutput ? $html : $html; // if rawOutput true, used inside template
     }
 
+    public function render_occurrences_meta_box(\WP_Post $post): void
+    {
+        $saved = get_post_meta($post->ID, '_eh_occurrences', true);
+        $occurrences = is_array($saved) ? $saved : [];
+        wp_nonce_field('eh_occurrences_meta', 'eh_occurrences_nonce');
+        echo '<style>
+            .eh-occ-box{border:1px solid #e5e7eb;border-radius:10px;background:#fff;padding:12px;margin-top:8px}
+            #eh-occurrences-table th,#eh-occurrences-table td{vertical-align:top}
+            #eh-occurrences-table input[type="datetime-local"]{min-width:190px}
+        </style>';
+        echo '<p>' . esc_html__('Voeg meerdere data toe. Elke datum heeft eigen capaciteit en boekingsvenster.', 'event-hub') . '</p>';
+        echo '<div class="eh-occ-box">';
+        echo '<table class="widefat striped" id="eh-occurrences-table">';
+        echo '<thead><tr>';
+        echo '<th>' . esc_html__('Start', 'event-hub') . '</th>';
+        echo '<th>' . esc_html__('Einde', 'event-hub') . '</th>';
+        echo '<th>' . esc_html__('Capaciteit', 'event-hub') . '</th>';
+        echo '<th>' . esc_html__('Registraties openen', 'event-hub') . '</th>';
+        echo '<th>' . esc_html__('Registraties sluiten', 'event-hub') . '</th>';
+        echo '<th></th>';
+        echo '</tr></thead><tbody>';
+        if (!$occurrences) {
+            $occurrences[] = ['id' => '', 'date_start' => '', 'date_end' => '', 'capacity' => '', 'booking_open' => '', 'booking_close' => ''];
+        }
+        foreach ($occurrences as $index => $occurrence) {
+            $this->render_occurrence_row($index, $occurrence);
+        }
+        echo '</tbody></table>';
+        echo '<p><button type="button" class="button" id="eh-occurrence-add-row">' . esc_html__('Datum toevoegen', 'event-hub') . '</button></p>';
+        ?>
+        <script>
+        (function(){
+            const table = document.getElementById('eh-occurrences-table');
+            const addBtn = document.getElementById('eh-occurrence-add-row');
+            if (!table || !addBtn) { return; }
+            addBtn.addEventListener('click', function(){
+                const tbody = table.querySelector('tbody');
+                const index = tbody.querySelectorAll('tr').length;
+                const tpl = document.getElementById('eh-occurrence-row-template').innerHTML.replace(/__i__/g, index);
+                const wrap = document.createElement('tbody');
+                wrap.innerHTML = tpl;
+                tbody.appendChild(wrap.firstElementChild);
+            });
+            table.addEventListener('click', function(e){
+                if (e.target.classList.contains('eh-occurrence-remove')) {
+                    e.preventDefault();
+                    const row = e.target.closest('tr');
+                    if (row) { row.remove(); }
+                }
+            });
+        })();
+        </script>
+        <template id="eh-occurrence-row-template">
+            <?php $this->render_occurrence_row('__i__', ['id'=>'','date_start'=>'','date_end'=>'','capacity'=>'','booking_open'=>'','booking_close'=>''], true); ?>
+        </template>
+        <?php
+        echo '</div>';
+    }
+
+    private function render_occurrence_row($index, array $occurrence, bool $rawOutput = false): void
+    {
+        $id = isset($occurrence['id']) ? (string) $occurrence['id'] : '';
+        $start = isset($occurrence['date_start']) ? (string) $occurrence['date_start'] : '';
+        $end = isset($occurrence['date_end']) ? (string) $occurrence['date_end'] : '';
+        $capacity = isset($occurrence['capacity']) ? (string) $occurrence['capacity'] : '';
+        $booking_open = isset($occurrence['booking_open']) ? (string) $occurrence['booking_open'] : '';
+        $booking_close = isset($occurrence['booking_close']) ? (string) $occurrence['booking_close'] : '';
+        $start_val = $start ? esc_attr(date('Y-m-d\TH:i', strtotime($start))) : '';
+        $end_val = $end ? esc_attr(date('Y-m-d\TH:i', strtotime($end))) : '';
+        $bo_val = $booking_open ? esc_attr(date('Y-m-d\TH:i', strtotime($booking_open))) : '';
+        $bc_val = $booking_close ? esc_attr(date('Y-m-d\TH:i', strtotime($booking_close))) : '';
+
+        ob_start();
+        echo '<tr>';
+        echo '<td><input type="hidden" name="eh_occurrences[id][]" value="' . esc_attr($id) . '" />';
+        echo '<input type="datetime-local" name="eh_occurrences[date_start][]" value="' . $start_val . '" /></td>';
+        echo '<td><input type="datetime-local" name="eh_occurrences[date_end][]" value="' . $end_val . '" /></td>';
+        echo '<td><input type="number" min="0" name="eh_occurrences[capacity][]" value="' . esc_attr($capacity) . '" placeholder="0" /></td>';
+        echo '<td><input type="datetime-local" name="eh_occurrences[booking_open][]" value="' . $bo_val . '" /></td>';
+        echo '<td><input type="datetime-local" name="eh_occurrences[booking_close][]" value="' . $bc_val . '" /></td>';
+        echo '<td><button type="button" class="button-link-delete eh-occurrence-remove">' . esc_html__('Verwijder', 'event-hub') . '</button></td>';
+        echo '</tr>';
+        $html = ob_get_clean();
+        echo $rawOutput ? $html : $html;
+    }
+
     public function register_admin_columns(): void
     {
         $cpt = $this->get_cpt();
@@ -309,7 +403,7 @@ class CPT_Session
 
         $query = new \WP_Query([
             'post_type' => $this->get_cpt(),
-            'posts_per_page' => $count,
+            'posts_per_page' => -1,
             'orderby' => 'meta_value',
             'meta_key' => '_eh_date_start',
             'order' => $order,
@@ -321,23 +415,81 @@ class CPT_Session
             return '<div class="eh-session-list-block no-results">' . esc_html__('Geen events gevonden.', 'event-hub') . '</div>';
         }
 
+        $items = [];
+        foreach ($query->posts as $post) {
+            $session_id = (int) $post->ID;
+            $occurrences = $this->registrations->get_occurrences($session_id);
+            if ($occurrences) {
+                foreach ($occurrences as $occ) {
+                    $occ_id = (int) ($occ['id'] ?? 0);
+                    if ($occ_id <= 0) {
+                        continue;
+                    }
+                    $start = $occ['date_start'] ?? '';
+                    if (!$start) {
+                        continue;
+                    }
+                    $items[] = [
+                        'session_id' => $session_id,
+                        'occurrence_id' => $occ_id,
+                        'start' => $start,
+                        'start_ts' => strtotime($start),
+                    ];
+                }
+                continue;
+            }
+            $start = get_post_meta($session_id, '_eh_date_start', true);
+            if (!$start) {
+                continue;
+            }
+            $items[] = [
+                'session_id' => $session_id,
+                'occurrence_id' => 0,
+                'start' => $start,
+                'start_ts' => strtotime($start),
+            ];
+        }
+
+        if (!$items) {
+            wp_reset_postdata();
+            return '<div class="eh-session-list-block no-results">' . esc_html__('Geen events gevonden.', 'event-hub') . '</div>';
+        }
+
+        usort($items, static function ($a, $b) use ($order): int {
+            $left = $a['start_ts'] ?? 0;
+            $right = $b['start_ts'] ?? 0;
+            if ($left === $right) {
+                return 0;
+            }
+            if ($order === 'DESC') {
+                return $left < $right ? 1 : -1;
+            }
+            return $left < $right ? -1 : 1;
+        });
+
+        $items = array_slice($items, 0, $count);
+
         ob_start();
         echo '<div class="eh-session-list-block">';
-        while ($query->have_posts()) {
-            $query->the_post();
-            $session_id = get_the_ID();
-            $start = get_post_meta($session_id, '_eh_date_start', true);
+        foreach ($items as $item) {
+            $session_id = (int) $item['session_id'];
+            $occurrence_id = (int) $item['occurrence_id'];
+            $start = $item['start'] ?? '';
             $time = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : '';
-            $excerpt = $show_excerpt ? get_the_excerpt() : '';
+            $excerpt = $show_excerpt ? get_the_excerpt($session_id) : '';
+            $permalink = get_permalink($session_id);
+            if ($occurrence_id > 0) {
+                $permalink = add_query_arg('eh_occurrence', $occurrence_id, $permalink);
+            }
             echo '<article class="eh-session-card">';
-            echo '<h3 class="eh-session-title"><a href="' . esc_url(get_permalink()) . '">' . esc_html(get_the_title()) . '</a></h3>';
+            echo '<h3 class="eh-session-title"><a href="' . esc_url($permalink) . '">' . esc_html(get_the_title($session_id)) . '</a></h3>';
             if ($show_date && $time) {
                 echo '<div class="eh-session-meta"><span class="eh-session-date">' . esc_html($time) . '</span></div>';
             }
             if ($excerpt) {
                 echo '<div class="eh-session-excerpt">' . esc_html($excerpt) . '</div>';
             }
-            echo '<a class="eh-session-link" href="' . esc_url(get_permalink()) . '">' . esc_html__('Bekijk event', 'event-hub') . '</a>';
+            echo '<a class="eh-session-link" href="' . esc_url($permalink) . '">' . esc_html__('Bekijk event', 'event-hub') . '</a>';
             echo '</article>';
         }
         echo '</div>';
@@ -637,7 +789,7 @@ class CPT_Session
                         <div class="eh-form-two-col">
                             <div class="field">
                                 <label for="_eh_date_start"><?php echo esc_html__('Startdatum en -uur', 'event-hub'); ?></label>
-                                <input type="datetime-local" id="_eh_date_start" name="_eh_date_start" value="<?php echo $ds_val; ?>" required>
+                                <input type="datetime-local" id="_eh_date_start" name="_eh_date_start" value="<?php echo $ds_val; ?>">
                                 <p class="description"><?php echo esc_html__('We raden aan om hier altijd een uur in te vullen.', 'event-hub'); ?></p>
                             </div>
                             <div class="field">
@@ -1901,6 +2053,53 @@ class CPT_Session
             }
         }
 
+        $occurrences = [];
+        if (isset($_POST['eh_occurrences']) && is_array($_POST['eh_occurrences'])) {
+            $raw = $_POST['eh_occurrences'];
+            $ids = $raw['id'] ?? [];
+            $starts = $raw['date_start'] ?? [];
+            $ends = $raw['date_end'] ?? [];
+            $capacities = $raw['capacity'] ?? [];
+            $opens = $raw['booking_open'] ?? [];
+            $closes = $raw['booking_close'] ?? [];
+            $used_ids = [];
+            foreach ($starts as $i => $start_raw) {
+                $start_raw = sanitize_text_field((string) $start_raw);
+                if ($start_raw === '') {
+                    continue;
+                }
+                $end_raw = isset($ends[$i]) ? sanitize_text_field((string) $ends[$i]) : '';
+                $capacity_raw = isset($capacities[$i]) ? (string) $capacities[$i] : '';
+                $open_raw = isset($opens[$i]) ? sanitize_text_field((string) $opens[$i]) : '';
+                $close_raw = isset($closes[$i]) ? sanitize_text_field((string) $closes[$i]) : '';
+                $id = isset($ids[$i]) ? (int) $ids[$i] : 0;
+                if ($id <= 0) {
+                    $id = $this->generate_occurrence_id($used_ids);
+                }
+                $used_ids[] = $id;
+                $occurrences[] = [
+                    'id' => $id,
+                    'date_start' => gmdate('Y-m-d H:i:00', strtotime($start_raw)),
+                    'date_end' => $end_raw ? gmdate('Y-m-d H:i:00', strtotime($end_raw)) : '',
+                    'capacity' => $capacity_raw !== '' ? (int) $capacity_raw : 0,
+                    'booking_open' => $open_raw ? gmdate('Y-m-d H:i:00', strtotime($open_raw)) : '',
+                    'booking_close' => $close_raw ? gmdate('Y-m-d H:i:00', strtotime($close_raw)) : '',
+                ];
+            }
+            if ($occurrences) {
+                usort($occurrences, static function (array $a, array $b): int {
+                    return strtotime($a['date_start']) <=> strtotime($b['date_start']);
+                });
+                $first = $occurrences[0];
+                if (!empty($first['date_start'])) {
+                    $date_start = $first['date_start'];
+                }
+                if (!empty($first['date_end'])) {
+                    $date_end = $first['date_end'];
+                }
+            }
+        }
+
         // Convert HTML5 datetime-local (Y-m-d\TH:i) to MySQL datetime
         $ds_store = $date_start ? gmdate('Y-m-d H:i:00', strtotime($date_start)) : '';
         $de_store = $date_end ? gmdate('Y-m-d H:i:00', strtotime($date_end)) : '';
@@ -1909,6 +2108,11 @@ class CPT_Session
 
         update_post_meta($post_id, '_eh_date_start', $ds_store);
         update_post_meta($post_id, '_eh_date_end', $de_store);
+        if ($occurrences) {
+            update_post_meta($post_id, '_eh_occurrences', $occurrences);
+        } else {
+            delete_post_meta($post_id, '_eh_occurrences');
+        }
         update_post_meta($post_id, '_eh_location', $location);
         update_post_meta($post_id, '_eh_is_online', $is_online);
         update_post_meta($post_id, '_eh_show_on_site', $show_on_site);
@@ -2302,6 +2506,17 @@ class CPT_Session
         $path = trailingslashit(WP_CONTENT_DIR) . 'event-hub-debug.log';
         $line = '[' . gmdate('c') . "] {$tag} " . wp_json_encode($payload) . PHP_EOL;
         file_put_contents($path, $line, FILE_APPEND);
+    }
+
+    /**
+     * @param array<int> $existing
+     */
+    private function generate_occurrence_id(array $existing): int
+    {
+        do {
+            $id = wp_rand(100000, 999999999);
+        } while (in_array($id, $existing, true));
+        return $id;
     }
 
     /**

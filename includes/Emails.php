@@ -81,8 +81,7 @@ class Emails
         $reg = $this->registrations->get_registration($registration_id);
         if (!$reg || ($reg['status'] ?? '') === 'waitlist') { return; }
         $session_id = (int) $reg['session_id'];
-        $start = get_post_meta($session_id, '_eh_date_start', true);
-        $end   = get_post_meta($session_id, '_eh_date_end', true);
+        [$start, $end] = $this->get_occurrence_times($reg);
         $opts  = get_option(Settings::OPTION, []);
 
         // Send/schedule confirmation
@@ -286,8 +285,7 @@ class Emails
         $reg = $this->registrations->get_registration($registration_id);
         if (!$reg) { return; }
         $session_id = (int) $reg['session_id'];
-        $start = get_post_meta($session_id, '_eh_date_start', true);
-        $end   = get_post_meta($session_id, '_eh_date_end', true);
+        [$start, $end] = $this->get_occurrence_times($reg);
         $opts  = get_option(Settings::OPTION, []);
         $timing = $this->get_email_timing('waitlist', $session_id, $opts);
         $this->dispatch_with_timing(
@@ -405,6 +403,28 @@ class Emails
     }
 
     /**
+     * @return array{0:string,1:string}
+     */
+    private function get_occurrence_times(array $reg): array
+    {
+        $session_id = (int) ($reg['session_id'] ?? 0);
+        $occurrence_id = (int) ($reg['occurrence_id'] ?? 0);
+        if ($session_id > 0 && $occurrence_id > 0) {
+            $occurrence = $this->registrations->get_occurrence($session_id, $occurrence_id);
+            if ($occurrence) {
+                return [
+                    (string) ($occurrence['date_start'] ?? ''),
+                    (string) ($occurrence['date_end'] ?? ''),
+                ];
+            }
+        }
+        return [
+            (string) get_post_meta($session_id, '_eh_date_start', true),
+            (string) get_post_meta($session_id, '_eh_date_end', true),
+        ];
+    }
+
+    /**
      * Bouwt een map voor strtr() op basis van event + registratie.
      *
      * @param array    $reg
@@ -418,12 +438,17 @@ class Emails
             return get_post_meta($session_id, $key, true);
         };
 
-        $start = $meta('_eh_date_start');
-        $end   = $meta('_eh_date_end');
+        [$start, $end] = $this->get_occurrence_times($reg);
         $date_str = $start ? date_i18n(get_option('date_format'), strtotime($start)) : '';
         $time_str = $start ? date_i18n(get_option('time_format'), strtotime($start)) : '';
         $end_time = $end ? date_i18n(get_option('time_format'), strtotime($end)) : '';
         $colleagues = $this->format_colleagues($session_id);
+        $occurrence = null;
+        if (!empty($reg['occurrence_id'])) {
+            $occurrence = $this->registrations->get_occurrence($session_id, (int) $reg['occurrence_id']);
+        }
+        $booking_open = $occurrence['booking_open'] ?? $meta('_eh_booking_open');
+        $booking_close = $occurrence['booking_close'] ?? $meta('_eh_booking_close');
         $cancel_link = '';
         $cancel_link_html = '';
         if (!empty($reg['cancel_token'])) {
@@ -466,8 +491,8 @@ class Emails
             '{ticket_note}'       => $meta('_eh_ticket_note') ?: '',
             '{price}'             => $meta('_eh_price') !== '' ? (string) $meta('_eh_price') : '',
             '{no_show_fee}'       => $meta('_eh_no_show_fee') !== '' ? (string) $meta('_eh_no_show_fee') : '',
-            '{booking_open}'      => $meta('_eh_booking_open') ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($meta('_eh_booking_open'))) : '',
-            '{booking_close}'     => $meta('_eh_booking_close') ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($meta('_eh_booking_close'))) : '',
+            '{booking_open}'      => $booking_open ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($booking_open)) : '',
+            '{booking_close}'     => $booking_close ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($booking_close)) : '',
             '{agenda}'            => $this->format_agenda($meta('_eh_agenda')),
             '{colleagues}'        => $colleagues['html'],
             '{colleague_names}'   => $colleagues['names'],
@@ -663,7 +688,7 @@ class Emails
         $now = current_time('timestamp');
         $table = $this->registrations->get_table();
         $rows = $wpdb->get_results(
-            "SELECT id, session_id, status FROM {$table} WHERE status IN ('registered','confirmed') AND session_id > 0",
+            "SELECT id, session_id, occurrence_id, status FROM {$table} WHERE status IN ('registered','confirmed') AND session_id > 0",
             ARRAY_A
         );
         if (!$rows) {
@@ -672,7 +697,7 @@ class Emails
         $opts = get_option(Settings::OPTION, []);
         foreach ($rows as $row) {
             $session_id = (int) $row['session_id'];
-            $start = get_post_meta($session_id, '_eh_date_start', true);
+            [$start] = $this->get_occurrence_times($row);
             if (!$start) {
                 continue;
             }

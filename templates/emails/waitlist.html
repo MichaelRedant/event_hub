@@ -1,0 +1,77 @@
+<title>Bevestiging wachtlijst - {event_title}</title>
+
+<!-- Preheader -->
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">
+  Je staat op de wachtlijst voor {event_title}.
+</div>
+
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#eef3f6">
+  <tr>
+    <td align="center" style="padding:24px 12px">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="640" style="width:640px;max-width:640px;background:#ffffff;border-radius:18px;overflow:hidden">
+
+        <!-- Header -->
+        <tr>
+          <td style="padding:22px 22px 14px 22px">
+            <div style="font-family:Arial, sans-serif;color:#0A1B2A">
+              <div style="font-size:14px;letter-spacing:0.02em;color:#2b5f83;font-weight:700">
+                {site_name}
+              </div>
+              <div style="margin-top:6px;font-size:20px;font-weight:800">
+                Bevestiging wachtlijst
+              </div>
+              <div style="margin-top:6px;font-size:14px;color:#35556b;line-height:1.6">
+                {event_title}
+              </div>
+            </div>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:20px 22px">
+            <div style="font-family:Arial, sans-serif;color:#0A1B2A;font-size:15px;line-height:1.7">
+              Dag {first_name},<br /><br />
+              Bedankt voor je interesse in <strong>{event_title}</strong>.
+            </div>
+
+            <div style="margin-top:10px;font-family:Arial, sans-serif;color:#0A1B2A;font-size:15px;line-height:1.7">
+              Je staat momenteel op de <strong>wachtlijst</strong> voor dit event.
+              Zodra er een plaats vrijkomt, brengen we je automatisch op de hoogte.
+            </div>
+
+            <div style="margin-top:14px;font-family:Arial, sans-serif;color:#35556b;font-size:14px;line-height:1.7">
+              Praktische info ter herinnering:
+              <ul style="margin:8px 0 0 18px;padding:0">
+                <li><strong>Datum:</strong> {event_date}</li>
+                <li><strong>Uur:</strong> {event_time}</li>
+                <li><strong>Locatie:</strong> {event_location}</li>
+              </ul>
+            </div>
+
+            <div style="margin-top:14px;font-family:Arial, sans-serif;color:#0A1B2A;font-size:14px;line-height:1.7">
+              Kan je intussen toch niet meer deelnemen?
+              Dan hoef je niets te doen. Je plaats op de wachtlijst vervalt automatisch.
+            </div>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:14px 22px 22px 22px;background:#ffffff">
+            <div style="font-family:Arial, sans-serif;color:#0A1B2A;font-size:14px;line-height:1.7">
+              Met vriendelijke groeten,<br />
+              <strong>{site_name}</strong>
+            </div>
+            <div style="font-family:Arial, sans-serif;color:#6a8597;font-size:12px;line-height:1.6;margin-top:10px">
+              {site_url}
+            </div>
+          </td>
+        </tr>
+
+      </table>
+
+      <div style="height:18px;line-height:18px;font-size:18px">&nbsp;</div>
+    </td>
+  </tr>
+</table>
