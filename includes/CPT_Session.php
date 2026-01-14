@@ -191,14 +191,16 @@ class CPT_Session
         <template id="eh-extra-row-template">
             <?php $this->render_extra_field_row('__i__', ['label'=>'','slug'=>'','type'=>'text','required'=>0,'options'=>[]], true); ?>
         </template>
-        <h4>' . esc_html__('Standaard velden verbergen', 'event-hub') . '</h4>
-        <p><label><input type="checkbox" name="eh_hide_fields[]" value="people_count"' . checked(in_array('people_count', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Aantal personen"', 'event-hub') . '</label></p>
-        <p><label><input type="checkbox" name="eh_hide_fields[]" value="phone"' . checked(in_array('phone', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Telefoon"', 'event-hub') . '</label></p>
-        <p><label><input type="checkbox" name="eh_hide_fields[]" value="company"' . checked(in_array('company', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Bedrijf"', 'event-hub') . '</label></p>
-        <p><label><input type="checkbox" name="eh_hide_fields[]" value="vat"' . checked(in_array('vat', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "BTW-nummer"', 'event-hub') . '</label></p>
-        <p><label><input type="checkbox" name="eh_hide_fields[]" value="role"' . checked(in_array('role', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Rol"', 'event-hub') . '</label></p>
-        <p><label><input type="checkbox" name="eh_hide_fields[]" value="marketing"' . checked(in_array('marketing', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg marketing-opt-in', 'event-hub') . '</label></p>
-        </div>
+        <?php
+        echo '<h4>' . esc_html__('Standaard velden verbergen', 'event-hub') . '</h4>';
+        echo '<p><label><input type="checkbox" name="eh_hide_fields[]" value="people_count"' . checked(in_array('people_count', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Aantal personen"', 'event-hub') . '</label></p>';
+        echo '<p><label><input type="checkbox" name="eh_hide_fields[]" value="phone"' . checked(in_array('phone', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Telefoon"', 'event-hub') . '</label></p>';
+        echo '<p><label><input type="checkbox" name="eh_hide_fields[]" value="company"' . checked(in_array('company', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Bedrijf"', 'event-hub') . '</label></p>';
+        echo '<p><label><input type="checkbox" name="eh_hide_fields[]" value="vat"' . checked(in_array('vat', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "BTW-nummer"', 'event-hub') . '</label></p>';
+        echo '<p><label><input type="checkbox" name="eh_hide_fields[]" value="role"' . checked(in_array('role', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg "Rol"', 'event-hub') . '</label></p>';
+        echo '<p><label><input type="checkbox" name="eh_hide_fields[]" value="marketing"' . checked(in_array('marketing', $hide_defaults, true), true, false) . '> ' . esc_html__('Verberg marketing-opt-in', 'event-hub') . '</label></p>';
+        echo '</div>';
+        ?>
         <?php
     }
 
@@ -1644,7 +1646,7 @@ class CPT_Session
 
         echo '<p>';
         echo '<label for="eventhub-bulk-template"><strong>' . esc_html__('Kies sjabloon', 'event-hub') . '</strong></label><br />';
-        echo '<select class="widefat" name="template_id" id="eventhub-bulk-template" required>';
+        echo '<select class="widefat" name="template_id" id="eventhub-bulk-template">';
         echo '<option value="">' . esc_html__('Selecteer…', 'event-hub') . '</option>';
         foreach ($templates as $template) {
             echo '<option value="' . esc_attr((string) $template->ID) . '">' . esc_html($template->post_title) . '</option>';
