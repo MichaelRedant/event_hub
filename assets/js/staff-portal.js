@@ -24,12 +24,18 @@
     const viewDelete = root.querySelector('.eh-sp-view-delete');
     const viewName = root.querySelector('.eh-sp-view-name');
     const viewSave = root.querySelector('.eh-sp-view-save-btn');
+    const searchInput = root.querySelector('.eh-sp-search');
+    const layoutMode = root.dataset.layout || 'table';
+    const addCustomBtn = root.querySelector('.eh-sp-add-custom');
+    const customNameInput = root.querySelector('.eh-sp-custom-name');
 
     let currentData = [];
     let currentFields = Object.keys(fieldLabels);
     let currentEventId = '';
     let currentOccurrenceId = '';
     let savedViews = {};
+    let filteredData = [];
+
     const occurrenceAllLabel = occurrenceSelect && occurrenceSelect.querySelector('option')
       ? occurrenceSelect.querySelector('option').textContent
       : 'Alle datums';
@@ -38,30 +44,56 @@
       return;
     }
 
-    // Build event options
-    events.forEach(evt => {
-      const opt = document.createElement('option');
-      opt.value = evt.id;
-      opt.textContent = evt.title;
-      eventSelect.appendChild(opt);
-    });
+    // Build event options (already in PHP, keep in sync if needed)
+    if (!eventSelect.options.length && events.length) {
+      events.forEach(evt => {
+        const opt = document.createElement('option');
+        opt.value = evt.id;
+        opt.textContent = evt.title;
+        eventSelect.appendChild(opt);
+      });
+    }
 
-    // Build field checkboxes
-    currentFields.forEach((field) => {
+    function addFieldOption(field, checked = true, labelText){
       const label = document.createElement('label');
       label.className = 'eh-sp-field';
+      label.dataset.field = field;
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.value = field;
-      cb.checked = true;
+      cb.checked = checked;
+      const text = document.createElement('span');
+      text.textContent = ' ' + (labelText || fieldLabels[field] || field);
+      const controls = document.createElement('span');
+      controls.className = 'eh-sp-move';
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'eh-sp-move-up';
+      up.textContent = '↑';
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.className = 'eh-sp-move-down';
+      down.textContent = '↓';
+      controls.appendChild(up);
+      controls.appendChild(down);
       label.appendChild(cb);
-      label.appendChild(document.createTextNode(' ' + (fieldLabels[field] || field)));
+      label.appendChild(text);
+      label.appendChild(controls);
       fieldWrap.appendChild(label);
-    });
+    }
+
+    // Build field checkboxes
+    currentFields.forEach((field) => addFieldOption(field, true));
 
     function getSelectedFields(){
-      const cbs = fieldWrap.querySelectorAll('input[type="checkbox"]:checked');
-      const list = Array.from(cbs).map(cb => cb.value);
+      const labels = fieldWrap.querySelectorAll('.eh-sp-field');
+      const list = [];
+      labels.forEach(label => {
+        const cb = label.querySelector('input[type="checkbox"]');
+        if (cb && cb.checked) {
+          list.push(cb.value);
+        }
+      });
       return list.length ? list : currentFields;
     }
 
@@ -128,6 +160,51 @@
       });
     }
 
+    function renderCards(fields, data){
+      tableHead.innerHTML = '';
+      tableBody.innerHTML = '';
+      if (!data.length){
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.textContent = 'Geen inschrijvingen gevonden.';
+        tr.appendChild(td);
+        tableBody.appendChild(tr);
+        return;
+      }
+      data.forEach(row => {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        const card = document.createElement('div');
+        card.className = 'eh-sp-card';
+        fields.forEach(f => {
+          const item = document.createElement('div');
+          item.className = 'eh-sp-card__item';
+          const label = document.createElement('div');
+          label.className = 'eh-sp-card__label';
+          label.textContent = fieldLabels[f] || f;
+          const valEl = document.createElement('div');
+          valEl.className = 'eh-sp-card__value';
+          let val = row[f];
+          if (val === null || val === undefined) { val = ''; }
+          valEl.textContent = typeof val === 'object' ? JSON.stringify(val) : String(val);
+          item.appendChild(label);
+          item.appendChild(valEl);
+          card.appendChild(item);
+        });
+        td.appendChild(card);
+        tr.appendChild(td);
+        tableBody.appendChild(tr);
+      });
+    }
+
+    function render(fields, data){
+      if (layoutMode === 'cards') {
+        renderCards(fields, data);
+      } else {
+        renderTable(fields, data);
+      }
+    }
+
     function toCSV(fields, data){
       const rows = [];
       rows.push(fields.map(f => fieldLabels[f] || f));
@@ -188,7 +265,9 @@
     function fetchRegistrations(eventId){
       if (!eventId){
         setStatus('Kies een event om inschrijvingen te laden.', false);
-        renderTable(getSelectedFields(), []);
+        currentData = [];
+        filteredData = [];
+        render(getSelectedFields(), []);
         return;
       }
       setStatus('Laden...', false);
@@ -209,13 +288,15 @@
         if (!res.success) {
           setStatus(res.message || 'Laden mislukt.', true);
           currentData = [];
-          renderTable(fields, currentData);
+          filteredData = [];
+          render(fields, []);
           return;
         }
         currentData = res.registrations || [];
         currentFields = res.fields || fields;
+        filteredData = currentData;
         setStatus('', false);
-        renderTable(currentFields, currentData);
+        applySearch();
       }).catch(() => {
         setStatus('Laden mislukt.', true);
       });
@@ -238,25 +319,59 @@
 
     fieldWrap.addEventListener('change', () => {
       currentFields = getSelectedFields();
-      if (currentEventId) {
-        fetchRegistrations(currentEventId);
-      } else {
-        renderTable(currentFields, currentData);
+      applySearch();
+    });
+
+    fieldWrap.addEventListener('click', (e) => {
+      const target = e.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.classList.contains('eh-sp-move-up') || target.classList.contains('eh-sp-move-down')) {
+        const label = target.closest('.eh-sp-field');
+        if (!label || !label.parentElement) return;
+        const parent = label.parentElement;
+        if (target.classList.contains('eh-sp-move-up')) {
+          const prev = label.previousElementSibling;
+          if (prev) parent.insertBefore(label, prev);
+        } else {
+          const next = label.nextElementSibling;
+          if (next) parent.insertBefore(next, label);
+        }
+        currentFields = getSelectedFields();
+        applySearch();
       }
     });
+
+    if (addCustomBtn) {
+      addCustomBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const name = customNameInput ? customNameInput.value.trim() : '';
+        if (!name) {
+          setStatus('Naam voor kolom ontbreekt.', true);
+          return;
+        }
+        const id = 'custom_' + Date.now();
+        fieldLabels[id] = name;
+        addFieldOption(id, true, name);
+        if (customNameInput) customNameInput.value = '';
+        currentFields = getSelectedFields();
+        applySearch();
+      });
+    }
 
     if (btnCsv){
       btnCsv.addEventListener('click', (e) => {
         e.preventDefault();
-        if (!currentData.length){ setStatus('Geen inschrijvingen om te exporteren.', true); return; }
-        downloadCSV(getSelectedFields(), currentData);
+        const data = filteredData.length ? filteredData : currentData;
+        if (!data.length){ setStatus('Geen inschrijvingen om te exporteren.', true); return; }
+        downloadCSV(getSelectedFields(), data);
       });
     }
     if (btnHtml){
       btnHtml.addEventListener('click', (e) => {
         e.preventDefault();
-        if (!currentData.length){ setStatus('Geen inschrijvingen om te tonen.', true); return; }
-        openHtml(getSelectedFields(), currentData);
+        const data = filteredData.length ? filteredData : currentData;
+        if (!data.length){ setStatus('Geen inschrijvingen om te tonen.', true); return; }
+        openHtml(getSelectedFields(), data);
       });
     }
 
@@ -291,11 +406,7 @@
         cb.checked = fields.includes(cb.value);
       });
       currentFields = fields;
-      if (currentEventId){
-        fetchRegistrations(currentEventId);
-      } else {
-        renderTable(fields, currentData);
-      }
+      applySearch();
     }
 
     if (viewApply && viewSelect){
@@ -354,6 +465,27 @@
       });
     }
 
+    function applySearch(){
+      const term = (searchInput ? searchInput.value : '').toLowerCase().trim();
+      if (!term){
+        filteredData = currentData;
+        render(currentFields, filteredData);
+        return;
+      }
+      filteredData = currentData.filter(row => {
+        return currentFields.some(f => {
+          const val = row[f];
+          if (val === null || val === undefined) return false;
+          return String(typeof val === 'object' ? JSON.stringify(val) : val).toLowerCase().includes(term);
+        });
+      });
+      render(currentFields, filteredData);
+    }
+
+    if (searchInput){
+      searchInput.addEventListener('input', applySearch);
+    }
+
     // Auto-load first event if available
     if (eventSelect.value){
       currentEventId = eventSelect.value;
@@ -372,4 +504,4 @@
   function parseJson(str, fallback){
     try { return JSON.parse(str || ''); } catch(e){ return fallback; }
   }
-})();
+})(); 

@@ -41,7 +41,51 @@ class Widget_Staff_Portal extends Widget_Base
 
     protected function register_controls(): void
     {
-        // Geen extra controls nodig: data komt vanuit PHP/REST.
+        $this->start_controls_section('section_layout', [
+            'label' => __('Weergave', 'event-hub'),
+        ]);
+
+        $this->add_control('layout_mode', [
+            'label' => __('Layout', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SELECT,
+            'default' => 'table',
+            'options' => [
+                'table' => __('Tabel', 'event-hub'),
+                'cards' => __('Cards', 'event-hub'),
+            ],
+        ]);
+
+        $this->add_control('accent_color', [
+            'label' => __('Accentkleur', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::COLOR,
+            'default' => '#0f6289',
+        ]);
+
+        $this->add_responsive_control('padding', [
+            'label' => __('Padding', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SLIDER,
+            'size_units' => ['px'],
+            'range' => ['px' => ['min' => 0, 'max' => 48]],
+            'default' => ['size' => 16, 'unit' => 'px'],
+        ]);
+
+        $this->add_responsive_control('radius', [
+            'label' => __('Hoekradius', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SLIDER,
+            'size_units' => ['px'],
+            'range' => ['px' => ['min' => 0, 'max' => 32]],
+            'default' => ['size' => 12, 'unit' => 'px'],
+        ]);
+
+        $this->add_control('gap', [
+            'label' => __('Afstand tussen elementen', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SLIDER,
+            'size_units' => ['px'],
+            'range' => ['px' => ['min' => 0, 'max' => 32]],
+            'default' => ['size' => 10, 'unit' => 'px'],
+        ]);
+
+        $this->end_controls_section();
     }
 
     protected function render(): void
@@ -126,8 +170,22 @@ class Widget_Staff_Portal extends Widget_Base
             esc_attr(wp_json_encode($occurrence_map)),
             esc_attr(wp_json_encode($fields))
         );
+
+        $settings = $this->get_settings_for_display();
+        $layout_mode = !empty($settings['layout_mode']) ? $settings['layout_mode'] : 'table';
+        $accent = !empty($settings['accent_color']) ? $settings['accent_color'] : '#0f6289';
+        $pad = isset($settings['padding']['size']) ? (float) $settings['padding']['size'] . ($settings['padding']['unit'] ?? 'px') : '16px';
+        $radius = isset($settings['radius']['size']) ? (float) $settings['radius']['size'] . ($settings['radius']['unit'] ?? 'px') : '12px';
+        $gap = isset($settings['gap']['size']) ? (float) $settings['gap']['size'] . ($settings['gap']['unit'] ?? 'px') : '10px';
+        $style_vars = sprintf(
+            '--eh-sp-accent:%s;--eh-sp-pad:%s;--eh-sp-radius:%s;--eh-sp-gap:%s;',
+            esc_attr($accent),
+            esc_attr($pad),
+            esc_attr($radius),
+            esc_attr($gap)
+        );
         ?>
-        <div class="eh-staff-portal" <?php echo $data_attrs; ?>>
+        <div class="eh-staff-portal" data-layout="<?php echo esc_attr($layout_mode); ?>" style="<?php echo esc_attr($style_vars); ?>" <?php echo $data_attrs; ?>>
             <div class="eh-sp-controls">
                 <label><?php esc_html_e('Kies event', 'event-hub'); ?>
                     <select class="eh-sp-event">
@@ -142,10 +200,18 @@ class Widget_Staff_Portal extends Widget_Base
                         <option value=""><?php esc_html_e('Alle datums', 'event-hub'); ?></option>
                     </select>
                 </label>
+                <label><?php esc_html_e('Zoek', 'event-hub'); ?>
+                    <input type="text" class="eh-sp-search" placeholder="<?php esc_attr_e('Zoek in alle velden…', 'event-hub'); ?>" />
+                </label>
             </div>
             <div class="eh-sp-fields">
                 <p><strong><?php esc_html_e('Velden voor export/overzicht', 'event-hub'); ?></strong></p>
                 <div class="eh-sp-field-list"></div>
+                <div class="eh-sp-field-actions">
+                    <input type="text" class="eh-sp-custom-name" placeholder="<?php esc_attr_e('Naam nieuwe (lege) kolom', 'event-hub'); ?>" />
+                    <button type="button" class="eh-sp-add-custom button-secondary"><?php esc_html_e('Kolom toevoegen', 'event-hub'); ?></button>
+                    <span class="eh-sp-hint"><?php esc_html_e('Versleep of gebruik pijlen om volgorde te wijzigen.', 'event-hub'); ?></span>
+                </div>
             </div>
             <div class="eh-sp-views">
                 <div>

@@ -2625,6 +2625,9 @@ private function collect_stats(int $start_ts, int $end_ts): array
         $rows = $this->fetch_registrations($session_id, $status, $name, $occurrence_id);
         $colleagues_label = $this->get_event_colleagues_label($session_id);
         $extra_map = $this->collect_extra_field_map($rows);
+        if (!$rows) {
+            wp_die(__('Geen data om te exporteren.', 'event-hub'));
+        }
 
         nocache_headers();
 
@@ -2742,6 +2745,9 @@ private function collect_stats(int $start_ts, int $end_ts): array
         $rows = $this->fetch_registrations($session_id, $status, $name, $occurrence_id);
         $colleagues_label = $this->get_event_colleagues_label($session_id);
         $extra_map = $this->collect_extra_field_map($rows);
+        if (!$rows) {
+            wp_die(__('Geen data om te exporteren.', 'event-hub'));
+        }
 
         $payload = [];
         foreach ($rows as $row) {
@@ -2796,6 +2802,9 @@ private function collect_stats(int $start_ts, int $end_ts): array
         $rows = $this->fetch_registrations($session_id, $status, $name, $occurrence_id);
         $colleagues_label = $this->get_event_colleagues_label($session_id);
         $extra_map = $this->collect_extra_field_map($rows);
+        if (!$rows) {
+            wp_die(__('Geen data om te exporteren.', 'event-hub'));
+        }
 
         $headers = [
             'ID',
@@ -2929,6 +2938,11 @@ private function collect_stats(int $start_ts, int $end_ts): array
         $zip->addFromString('xl/styles.xml', $stylesXml);
         $zip->close();
 
+        if (function_exists('ob_get_level')) {
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+        }
         nocache_headers();
         header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         header('Content-Disposition: attachment; filename="' . sanitize_file_name($filename) . '"');
@@ -2944,6 +2958,11 @@ private function collect_stats(int $start_ts, int $end_ts): array
      */
     private function output_csv_fallback(array $rows, string $filename): void
     {
+        if (function_exists('ob_get_level')) {
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+        }
         nocache_headers();
         @set_time_limit(0);
         wp_raise_memory_limit('admin');
@@ -2989,6 +3008,9 @@ private function collect_stats(int $start_ts, int $end_ts): array
         $rows = $this->fetch_registrations($session_id, $status, $name, $occurrence_id);
 
         $extra_map = $this->collect_extra_field_map($rows);
+        if (!$rows) {
+            wp_die(__('Geen data om te exporteren.', 'event-hub'));
+        }
 
         nocache_headers();
 
@@ -3221,6 +3243,9 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         $registrations = $this->registrations->get_registrations_by_session($event_id, $occurrence_id);
         $colleagues_label = $this->get_event_colleagues_label($event_id);
+        if (!$registrations) {
+            wp_die(__('Geen data om te exporteren.', 'event-hub'));
+        }
         $colleagues_label = $this->get_event_colleagues_label($event_id);
 
         $search = isset($_GET['eh_search']) ? sanitize_text_field((string) $_GET['eh_search']) : '';
@@ -4100,6 +4125,9 @@ private function collect_stats(int $start_ts, int $end_ts): array
         }
 
         $registrations = $this->registrations->get_registrations_by_session($event_id, $occurrence_id);
+        if (!$registrations) {
+            wp_die(__('Geen data om te exporteren.', 'event-hub'));
+        }
         $colleagues_label = $this->get_event_colleagues_label($event_id);
         $extra_map = $this->collect_extra_field_map($registrations);
 
@@ -4148,6 +4176,9 @@ private function collect_stats(int $start_ts, int $end_ts): array
         }
 
         $registrations = $this->registrations->get_registrations_by_session($event_id, $occurrence_id);
+        if (!$registrations) {
+            wp_die(__('Geen data om te exporteren.', 'event-hub'));
+        }
         $colleagues_label = $this->get_event_colleagues_label($event_id);
         $extra_map = $this->collect_extra_field_map($registrations);
 

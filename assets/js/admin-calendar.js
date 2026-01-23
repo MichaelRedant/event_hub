@@ -320,6 +320,10 @@
                     var evs = calendar.getEvents().filter(function(ev){
                         return ev.start && ev.start >= start && ev.start < end;
                     });
+                    if (!evs.length) {
+                        alert(eventHubCalendar.labels.export_none || 'Geen events in deze maand.');
+                        return;
+                    }
                     openExportModal(evs);
                 } catch (e) {
                     console.warn('Event Hub export mislukte', e);
