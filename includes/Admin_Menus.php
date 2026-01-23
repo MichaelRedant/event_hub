@@ -721,6 +721,13 @@ class Admin_Menus
                     'error'   => __('Events konden niet worden opgehaald.', 'event-hub'),
 
                     'create'  => __('Nieuw event maken', 'event-hub'),
+                    'export'  => __('Exporteer', 'event-hub'),
+                    'export_title' => __('Selecteer events in deze maand', 'event-hub'),
+                    'export_none' => __('Geen events in deze maand.', 'event-hub'),
+                    'export_help' => __('Selecteer één of meerdere events/occurrences en kies een formaat.', 'event-hub'),
+                    'format_csv' => __('CSV', 'event-hub'),
+                    'format_xlsx' => __('XLSX', 'event-hub'),
+                    'format_json' => __('JSON', 'event-hub'),
 
                 ],
 
@@ -728,6 +735,8 @@ class Admin_Menus
                 'dashboardBase' => admin_url('admin.php?page=event-hub-event'),
                 'registrationsBase' => admin_url('admin.php?page=event-hub-registrations'),
                 'newRegistrationBase' => admin_url('admin.php?page=event-hub-registrations&action=new'),
+                'exportNonce' => wp_create_nonce('eh_reg_export'),
+                'exportBase' => admin_url('admin.php'),
 
             ]);
 
@@ -1317,6 +1326,36 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         }
 
+        if (isset($_GET['download']) && $_GET['download'] === 'xlsx') {
+
+            $session_id = isset($_GET['session_id']) ? (int) $_GET['session_id'] : 0;
+            $occurrence_id = isset($_GET['occurrence_id']) ? (int) $_GET['occurrence_id'] : 0;
+
+            $status = isset($_GET['status']) ? sanitize_text_field((string) $_GET['status']) : '';
+
+            $name = isset($_GET['name']) ? sanitize_text_field((string) $_GET['name']) : '';
+
+            $this->export_registrations_xlsx($session_id, $status, $name, $occurrence_id);
+
+            return;
+
+        }
+
+        if (isset($_GET['download']) && $_GET['download'] === 'json') {
+
+            $session_id = isset($_GET['session_id']) ? (int) $_GET['session_id'] : 0;
+            $occurrence_id = isset($_GET['occurrence_id']) ? (int) $_GET['occurrence_id'] : 0;
+
+            $status = isset($_GET['status']) ? sanitize_text_field((string) $_GET['status']) : '';
+
+            $name = isset($_GET['name']) ? sanitize_text_field((string) $_GET['name']) : '';
+
+            $this->export_registrations_json($session_id, $status, $name, $occurrence_id);
+
+            return;
+
+        }
+
         if (isset($_GET['download']) && $_GET['download'] === 'html') {
 
             $session_id = isset($_GET['session_id']) ? (int) $_GET['session_id'] : 0;
@@ -1499,9 +1538,13 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         submit_button(__('Filteren', 'event-hub'), 'primary', '', false);
 
-        echo '<button type="submit" name="download" value="csv" class="button button-secondary">' . esc_html__('Exporteer CSV', 'event-hub') . '</button>';
-
-        echo '<button type="submit" name="download" value="html" class="button">' . esc_html__('Printbare lijst (HTML)', 'event-hub') . '</button>';
+        echo '<select name="download" style="margin-left:8px;">';
+        echo '<option value="csv">' . esc_html__('Exporteren (CSV)', 'event-hub') . '</option>';
+        echo '<option value="xlsx">' . esc_html__('Exporteren (XLSX)', 'event-hub') . '</option>';
+        echo '<option value="json">' . esc_html__('Exporteren (JSON)', 'event-hub') . '</option>';
+        echo '<option value="html">' . esc_html__('Printbare lijst (HTML)', 'event-hub') . '</option>';
+        echo '</select>';
+        echo '<button type="submit" class="button button-secondary">' . esc_html__('Download', 'event-hub') . '</button>';
 
         echo '</form>';
 
@@ -2687,6 +2730,244 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
     }
 
+    private function export_registrations_json(int $session_id, string $status, string $name, int $occurrence_id = 0): void
+    {
+        if (!isset($_GET['download_nonce']) || !wp_verify_nonce(sanitize_text_field((string) $_GET['download_nonce']), 'eh_reg_export')) {
+            wp_die(__('Ongeldige exportaanvraag.', 'event-hub'));
+        }
+        if (!current_user_can('edit_posts')) {
+            wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
+        }
+
+        $rows = $this->fetch_registrations($session_id, $status, $name, $occurrence_id);
+        $colleagues_label = $this->get_event_colleagues_label($session_id);
+        $extra_map = $this->collect_extra_field_map($rows);
+
+        $payload = [];
+        foreach ($rows as $row) {
+            $extra = [];
+            if (!empty($row['extra_data'])) {
+                $decoded = json_decode((string) $row['extra_data'], true);
+                if (is_array($decoded)) {
+                    $extra = $decoded;
+                }
+            }
+            $entry = [
+                'id' => $row['id'],
+                'event_id' => $row['session_id'],
+                'event' => get_the_title((int) $row['session_id']),
+                'occurrence' => $this->format_occurrence_label((int) $row['session_id'], (int) ($row['occurrence_id'] ?? 0)),
+                'first_name' => $row['first_name'],
+                'last_name' => $row['last_name'],
+                'email' => $row['email'],
+                'status' => $row['status'],
+                'people_count' => $row['people_count'],
+                'phone' => $row['phone'],
+                'company' => $row['company'],
+                'vat' => $row['vat'],
+                'role' => $row['role'],
+                'marketing' => (bool) $row['consent_marketing'],
+                'colleagues' => $colleagues_label,
+                'created_at' => $row['created_at'],
+                'extra' => [],
+            ];
+            foreach (array_keys($extra_map) as $slug) {
+                $entry['extra'][$slug] = $extra[$slug] ?? null;
+            }
+            $payload[] = $entry;
+        }
+
+        nocache_headers();
+        header('Content-Type: application/json; charset=utf-8');
+        header('Content-Disposition: attachment; filename="event-hub-registraties-' . gmdate('Ymd-His') . '.json"');
+        echo wp_json_encode($payload);
+        exit;
+    }
+
+    private function export_registrations_xlsx(int $session_id, string $status, string $name, int $occurrence_id = 0): void
+    {
+        if (!isset($_GET['download_nonce']) || !wp_verify_nonce(sanitize_text_field((string) $_GET['download_nonce']), 'eh_reg_export')) {
+            wp_die(__('Ongeldige exportaanvraag.', 'event-hub'));
+        }
+        if (!current_user_can('edit_posts')) {
+            wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
+        }
+
+        $rows = $this->fetch_registrations($session_id, $status, $name, $occurrence_id);
+        $colleagues_label = $this->get_event_colleagues_label($session_id);
+        $extra_map = $this->collect_extra_field_map($rows);
+
+        $headers = [
+            'ID',
+            'Event',
+            'Datum',
+            'Voornaam',
+            'Familienaam',
+            'E-mail',
+            'Status',
+            'Personen',
+            'Telefoon',
+            'Bedrijf',
+            'BTW',
+            'Rol',
+            'Marketing',
+            'Collega\'s',
+            'Aangemaakt',
+            ...array_values($extra_map),
+        ];
+
+        $data = [];
+        foreach ($rows as $row) {
+            $title = get_the_title((int) $row['session_id']);
+            $extra_vals = [];
+            $extra = [];
+            if (!empty($row['extra_data'])) {
+                $decoded = json_decode((string) $row['extra_data'], true);
+                if (is_array($decoded)) {
+                    $extra = $decoded;
+                }
+            }
+            foreach (array_keys($extra_map) as $slug) {
+                $extra_vals[] = isset($extra[$slug]) ? (is_scalar($extra[$slug]) ? $extra[$slug] : wp_json_encode($extra[$slug])) : '';
+            }
+            $occurrence_label = $this->format_occurrence_label((int) $row['session_id'], (int) ($row['occurrence_id'] ?? 0));
+            $data[] = [
+                $row['id'],
+                $title,
+                $occurrence_label,
+                $row['first_name'],
+                $row['last_name'],
+                $row['email'],
+                $row['status'],
+                $row['people_count'],
+                $row['phone'],
+                $row['company'],
+                $row['vat'],
+                $row['role'],
+                $row['consent_marketing'] ? 'ja' : 'nee',
+                $colleagues_label,
+                $row['created_at'],
+                ...$extra_vals,
+            ];
+        }
+
+        $outRows = array_merge([$headers], $data);
+        if (empty($outRows)) {
+            wp_die(__('Geen data om te exporteren.', 'event-hub'));
+        }
+        $this->output_xlsx($outRows, 'event-hub-registraties-' . gmdate('Ymd-His') . '.xlsx');
+    }
+
+    /**
+     * Lightweight XLSX exporter (inline strings). Falls back to CSV if ZipArchive is missing.
+     *
+     * @param array<int,array<int|string>> $rows
+     */
+    private function output_xlsx(array $rows, string $filename): void
+    {
+        if (!class_exists(\ZipArchive::class)) {
+            $this->output_csv_fallback($rows, $filename . '.csv');
+            return;
+        }
+
+        $sheetRows = [];
+        $rowIndex = 1;
+        foreach ($rows as $row) {
+            $cells = [];
+            $colIndex = 0;
+            foreach ($row as $cell) {
+                $colIndex++;
+                $col = $this->xlsx_col_name($colIndex);
+                $cells[] = '<c r="' . $col . $rowIndex . '" t="inlineStr"><is><t>' . esc_xml((string) $cell) . '</t></is></c>';
+            }
+            $sheetRows[] = '<row r="' . $rowIndex . '">' . implode('', $cells) . '</row>';
+            $rowIndex++;
+        }
+
+        $sheetXml = '<?xml version="1.0" encoding="UTF-8"?>'
+            . '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+            . implode('', $sheetRows)
+            . '</sheetData></worksheet>';
+
+        $workbookXml = '<?xml version="1.0" encoding="UTF-8"?>'
+            . '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            . '<sheets><sheet name="Registraties" sheetId="1" r:id="rId1"/></sheets></workbook>';
+
+        $relsXml = '<?xml version="1.0" encoding="UTF-8"?>'
+            . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+            . '</Relationships>';
+
+        $wbRelsXml = '<?xml version="1.0" encoding="UTF-8"?>'
+            . '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            . '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+            . '</Relationships>';
+
+        $contentTypes = '<?xml version="1.0" encoding="UTF-8"?>'
+            . '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            . '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+            . '<Default Extension="xml" ContentType="application/xml"/>'
+            . '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+            . '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+            . '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+            . '</Types>';
+
+        $stylesXml = '<?xml version="1.0" encoding="UTF-8"?>'
+            . '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font/></fonts><fills count="1"><fill/></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="1"><xf xfId="0"/></cellXfs></styleSheet>';
+
+        $zip = new \ZipArchive();
+        $tmp = wp_tempnam($filename);
+        if (!$tmp || $zip->open($tmp, \ZipArchive::OVERWRITE) !== true) {
+            $this->output_csv_fallback($rows, $filename . '.csv');
+            return;
+        }
+        $zip->addFromString('[Content_Types].xml', $contentTypes);
+        $zip->addFromString('_rels/.rels', $relsXml);
+        $zip->addFromString('xl/workbook.xml', $workbookXml);
+        $zip->addFromString('xl/_rels/workbook.xml.rels', $wbRelsXml);
+        $zip->addFromString('xl/worksheets/sheet1.xml', $sheetXml);
+        $zip->addFromString('xl/styles.xml', $stylesXml);
+        $zip->close();
+
+        nocache_headers();
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="' . sanitize_file_name($filename) . '"');
+        readfile($tmp);
+        @unlink($tmp);
+        exit;
+    }
+
+    /**
+     * Simple fallback to CSV if XLSX cannot be gebouwd.
+     *
+     * @param array<int,array<int|string>> $rows
+     */
+    private function output_csv_fallback(array $rows, string $filename): void
+    {
+        nocache_headers();
+        @set_time_limit(0);
+        wp_raise_memory_limit('admin');
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . sanitize_file_name($filename) . '"');
+        $out = fopen('php://output', 'w');
+        foreach ($rows as $row) {
+            fputcsv($out, $row);
+        }
+        fclose($out);
+        exit;
+    }
+
+    private function xlsx_col_name(int $index): string
+    {
+        $name = '';
+        while ($index > 0) {
+            $index--;
+            $name = chr(65 + ($index % 26)) . $name;
+            $index = (int) floor($index / 26);
+        }
+        return $name;
+    }
+
 
 
     private function render_printable_registrations(int $session_id, string $status, string $name, int $occurrence_id = 0): void
@@ -2911,11 +3192,16 @@ private function collect_stats(int $start_ts, int $end_ts): array
         }
 
         if (isset($_GET['download'], $_GET['nonce']) && $_GET['download'] === 'csv') {
-
             $this->export_event_dashboard_csv($event_id, sanitize_text_field((string) $_GET['nonce']), $occurrence_id);
-
             return;
-
+        }
+        if (isset($_GET['download'], $_GET['nonce']) && $_GET['download'] === 'xlsx') {
+            $this->export_event_dashboard_xlsx($event_id, sanitize_text_field((string) $_GET['nonce']), $occurrence_id);
+            return;
+        }
+        if (isset($_GET['download'], $_GET['nonce']) && $_GET['download'] === 'json') {
+            $this->export_event_dashboard_json($event_id, sanitize_text_field((string) $_GET['nonce']), $occurrence_id);
+            return;
         }
 
 
@@ -3118,7 +3404,10 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         echo '<a class="button" href="' . esc_url(add_query_arg(['page' => 'event-hub-registrations', 'action' => 'new', 'session_id' => $event_id, 'occurrence_id' => $occurrence_id ?: ''], admin_url('admin.php'))) . '">' . esc_html__('Nieuwe inschrijving', 'event-hub') . '</a>';
 
-        echo '<a class="button" href="' . esc_url(add_query_arg(['page' => 'event-hub-event', 'event_id' => $event_id, 'occurrence_id' => $occurrence_id ?: '', 'download' => 'csv', 'nonce' => wp_create_nonce('eh_event_csv_' . $event_id)], admin_url('admin.php'))) . '">' . esc_html__('Download CSV', 'event-hub') . '</a>';
+        $export_args = ['page' => 'event-hub-event', 'event_id' => $event_id, 'occurrence_id' => $occurrence_id ?: '', 'nonce' => wp_create_nonce('eh_event_csv_' . $event_id)];
+        echo '<a class="button" href="' . esc_url(add_query_arg(array_merge($export_args, ['download' => 'csv']), admin_url('admin.php'))) . '">' . esc_html__('Download CSV', 'event-hub') . '</a>';
+        echo '<a class="button" href="' . esc_url(add_query_arg(array_merge($export_args, ['download' => 'xlsx']), admin_url('admin.php'))) . '">' . esc_html__('Download XLSX', 'event-hub') . '</a>';
+        echo '<a class="button" href="' . esc_url(add_query_arg(array_merge($export_args, ['download' => 'json']), admin_url('admin.php'))) . '">' . esc_html__('Download JSON', 'event-hub') . '</a>';
 
         if ($templates) {
 
@@ -3799,6 +4088,117 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         exit;
 
+    }
+
+    private function export_event_dashboard_json(int $event_id, string $nonce, int $occurrence_id = 0): void
+    {
+        if (!wp_verify_nonce($nonce, 'eh_event_csv_' . $event_id)) {
+            wp_die(__('Ongeldige exportaanvraag.', 'event-hub'));
+        }
+        if (!current_user_can('edit_posts')) {
+            wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
+        }
+
+        $registrations = $this->registrations->get_registrations_by_session($event_id, $occurrence_id);
+        $colleagues_label = $this->get_event_colleagues_label($event_id);
+        $extra_map = $this->collect_extra_field_map($registrations);
+
+        $payload = [];
+        foreach ($registrations as $row) {
+            $extra = [];
+            if (!empty($row['extra_data'])) {
+                $decoded = json_decode((string) $row['extra_data'], true);
+                if (is_array($decoded)) {
+                    $extra = $decoded;
+                }
+            }
+            $entry = [
+                'first_name' => $row['first_name'],
+                'last_name' => $row['last_name'],
+                'email' => $row['email'],
+                'date' => $this->format_occurrence_label($event_id, (int) ($row['occurrence_id'] ?? 0)),
+                'phone' => $row['phone'],
+                'company' => $row['company'],
+                'people_count' => $row['people_count'],
+                'status' => $row['status'],
+                'colleagues' => $colleagues_label,
+                'created_at' => $row['created_at'],
+                'extra' => [],
+            ];
+            foreach (array_keys($extra_map) as $slug) {
+                $entry['extra'][$slug] = $extra[$slug] ?? null;
+            }
+            $payload[] = $entry;
+        }
+
+        nocache_headers();
+        header('Content-Type: application/json; charset=utf-8');
+        header('Content-Disposition: attachment; filename="event-hub-event-' . $event_id . '-' . gmdate('Ymd-His') . '.json"');
+        echo wp_json_encode($payload);
+        exit;
+    }
+
+    private function export_event_dashboard_xlsx(int $event_id, string $nonce, int $occurrence_id = 0): void
+    {
+        if (!wp_verify_nonce($nonce, 'eh_event_csv_' . $event_id)) {
+            wp_die(__('Ongeldige exportaanvraag.', 'event-hub'));
+        }
+        if (!current_user_can('edit_posts')) {
+            wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
+        }
+
+        $registrations = $this->registrations->get_registrations_by_session($event_id, $occurrence_id);
+        $colleagues_label = $this->get_event_colleagues_label($event_id);
+        $extra_map = $this->collect_extra_field_map($registrations);
+
+        $headers = [
+            __('Voornaam', 'event-hub'),
+            __('Familienaam', 'event-hub'),
+            __('E-mail', 'event-hub'),
+            __('Datum', 'event-hub'),
+            __('Telefoon', 'event-hub'),
+            __('Bedrijf', 'event-hub'),
+            __('Aantal personen', 'event-hub'),
+            __('Status', 'event-hub'),
+            __('Collega\'s', 'event-hub'),
+            __('Aangemaakt', 'event-hub'),
+            ...array_values($extra_map),
+        ];
+
+        $data = [];
+        foreach ($registrations as $row) {
+            $occurrence_label = $this->format_occurrence_label($event_id, (int) ($row['occurrence_id'] ?? 0));
+            $extra_vals = [];
+            $extra = [];
+            if (!empty($row['extra_data'])) {
+                $decoded = json_decode((string) $row['extra_data'], true);
+                if (is_array($decoded)) {
+                    $extra = $decoded;
+                }
+            }
+            foreach (array_keys($extra_map) as $slug) {
+                $extra_vals[] = isset($extra[$slug]) ? (is_scalar($extra[$slug]) ? $extra[$slug] : wp_json_encode($extra[$slug])) : '';
+            }
+            $data[] = [
+                $row['first_name'],
+                $row['last_name'],
+                $row['email'],
+                $occurrence_label,
+                $row['phone'],
+                $row['company'],
+                $row['people_count'],
+                $row['status'],
+                $colleagues_label,
+                $row['created_at'],
+                ...$extra_vals,
+            ];
+        }
+
+        $outRows = array_merge([$headers], $data);
+        if (empty($outRows)) {
+            wp_die(__('Geen data om te exporteren.', 'event-hub'));
+        }
+        $this->output_xlsx($outRows, 'event-hub-event-' . $event_id . '-' . gmdate('Ymd-His') . '.xlsx');
     }
 
     private function format_occurrence_label(int $session_id, int $occurrence_id): string

@@ -214,5 +214,119 @@
             });
             body.appendChild(actions);
         });
+
+        // Export modal helper
+        function openExportModal(events) {
+            closeModal();
+            modal = document.createElement('div');
+            modal.className = 'eh-cal-modal';
+            modal.innerHTML = '<div class="eh-cal-modal__backdrop"></div><div class="eh-cal-modal__card"><button class="eh-cal-modal__close" aria-label="Close">×</button><div class="eh-cal-modal__body"></div></div>';
+            document.body.appendChild(modal);
+            modal.querySelector('.eh-cal-modal__close').addEventListener('click', closeModal);
+            modal.querySelector('.eh-cal-modal__backdrop').addEventListener('click', closeModal);
+
+            var body = modal.querySelector('.eh-cal-modal__body');
+            var title = document.createElement('h3');
+            title.textContent = eventHubCalendar.labels.export_title || 'Selecteer events';
+            body.appendChild(title);
+
+            if (!events.length) {
+                var empty = document.createElement('p');
+                empty.textContent = eventHubCalendar.labels.export_none || 'Geen events in deze maand.';
+                body.appendChild(empty);
+                return;
+            }
+
+            var help = document.createElement('p');
+            help.className = 'description';
+            help.textContent = eventHubCalendar.labels.export_help || '';
+            body.appendChild(help);
+
+            var list = document.createElement('div');
+            list.className = 'eh-export-list';
+            events.forEach(function(ev){
+                var props = ev.extendedProps || {};
+                var label = document.createElement('label');
+                label.className = 'eh-export-item';
+                var cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.value = ev.id;
+                cb.dataset.eventId = props.event_id || ev.id;
+                cb.dataset.occurrenceId = props.occurrence_id || '';
+                cb.checked = true;
+                var titleSpan = document.createElement('span');
+                titleSpan.className = 'eh-export-title';
+                titleSpan.textContent = ev.title || '(zonder titel)';
+                var metaSpan = document.createElement('span');
+                metaSpan.className = 'eh-export-meta';
+                var start = ev.start ? ev.start.toLocaleString() : '';
+                metaSpan.textContent = start;
+                label.appendChild(cb);
+                label.appendChild(titleSpan);
+                label.appendChild(metaSpan);
+                list.appendChild(label);
+            });
+            body.appendChild(list);
+
+            var format = document.createElement('select');
+            format.innerHTML = ''
+                + '<option value="csv">' + (eventHubCalendar.labels.format_csv || 'CSV') + '</option>'
+                + '<option value="xlsx">' + (eventHubCalendar.labels.format_xlsx || 'XLSX') + '</option>'
+                + '<option value="json">' + (eventHubCalendar.labels.format_json || 'JSON') + '</option>';
+
+            var actions = document.createElement('div');
+            actions.className = 'eh-cal-actions';
+            var exportBtn = document.createElement('button');
+            exportBtn.className = 'button button-primary';
+            exportBtn.type = 'button';
+            exportBtn.textContent = eventHubCalendar.labels.export || 'Exporteer';
+            actions.appendChild(format);
+            actions.appendChild(exportBtn);
+            body.appendChild(actions);
+
+            exportBtn.addEventListener('click', function(){
+                var formatVal = format.value || 'csv';
+                var selected = list.querySelectorAll('input[type="checkbox"]:checked');
+                if (!selected.length) {
+                    closeModal();
+                    return;
+                }
+                selected.forEach(function(cb){
+                    var sessionId = cb.dataset.eventId;
+                    var occId = cb.dataset.occurrenceId || '';
+                    var url = eventHubCalendar.exportBase + '?page=event-hub-registrations&download=' + encodeURIComponent(formatVal)
+                        + '&download_nonce=' + encodeURIComponent(eventHubCalendar.exportNonce)
+                        + '&session_id=' + encodeURIComponent(sessionId)
+                        + (occId ? '&occurrence_id=' + encodeURIComponent(occId) : '');
+                    window.open(url, '_blank');
+                });
+                closeModal();
+            });
+        }
+
+        // Export button in toolbar
+        var toolbar = container.parentElement && container.parentElement.querySelector('.fc-header-toolbar');
+        if (toolbar && eventHubCalendar.exportBase && eventHubCalendar.exportNonce) {
+            var exportBtn = document.createElement('button');
+            exportBtn.type = 'button';
+            exportBtn.className = 'button';
+            exportBtn.style.marginLeft = '8px';
+            exportBtn.textContent = eventHubCalendar.labels.export || 'Exporteer';
+            exportBtn.addEventListener('click', function(){
+                try {
+                    var view = calendar.view;
+                    var start = view.currentStart;
+                    var end = view.currentEnd;
+                    var evs = calendar.getEvents().filter(function(ev){
+                        return ev.start && ev.start >= start && ev.start < end;
+                    });
+                    openExportModal(evs);
+                } catch (e) {
+                    console.warn('Event Hub export mislukte', e);
+                }
+            });
+            var right = toolbar.querySelector('.fc-toolbar-chunk:nth-child(3)') || toolbar;
+            right.appendChild(exportBtn);
+        }
     });
 })();

@@ -333,6 +333,11 @@
     flex-wrap: wrap;
     margin-bottom: 8px;
 }
+.eh-export-list{max-height:320px;overflow:auto;display:grid;gap:8px;margin:12px 0}
+.eh-export-item{display:flex;flex-direction:column;gap:2px;padding:10px;border:1px solid #e1e5ec;border-radius:8px;background:#fff;box-shadow:0 6px 16px rgba(15,23,42,0.05);cursor:pointer}
+.eh-export-item input{margin-right:8px}
+.eh-export-item .eh-export-title{font-weight:700;color:#0a1b2a}
+.eh-export-item .eh-export-meta{font-size:12px;color:#475569}
 .eh-cal-when {
     color: #475569;
     margin-bottom: 10px;
