@@ -775,10 +775,27 @@ class Widget_Session_List extends Widget_Base
         $excerpt = get_the_excerpt($post_id);
         $start = $start_override ?: get_post_meta($post_id, '_eh_date_start', true);
         $location = get_post_meta($post_id, '_eh_location', true);
+        $location_address = get_post_meta($post_id, '_eh_address', true);
         $price = get_post_meta($post_id, '_eh_price', true);
         $ticket_note = get_post_meta($post_id, '_eh_ticket_note', true);
         $color = sanitize_hex_color((string) get_post_meta($post_id, '_eh_color', true)) ?: '#2271b1';
         $status = get_post_meta($post_id, '_eh_status', true) ?: 'open';
+
+        $occ_location = $location;
+        $occ_location_address = $location_address;
+        if ($occurrence_id > 0) {
+            $occ_data = (new Registrations())->get_occurrence($post_id, $occurrence_id);
+            if ($occ_data) {
+                if (!empty($occ_data['location_name'])) {
+                    $occ_location = $occ_data['location_name'];
+                }
+                if (!empty($occ_data['location_address'])) {
+                    $occ_location_address = $occ_data['location_address'];
+                } elseif (!empty($occ_data['location_address'])) {
+                    $occ_location = $occ_data['location_address'];
+                }
+            }
+        }
 
         [$capacity, $booked, $available, $is_full, $waitlist] = $this->get_capacity_state($post_id, $occurrence_id);
         $date_label = $start ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start)) : '';
@@ -803,8 +820,9 @@ class Widget_Session_List extends Widget_Base
         if ($date_label) {
             echo '<div class="eh-meta">' . esc_html($date_label) . '</div>';
         }
-        if (!empty($settings['show_location']) && $settings['show_location'] === 'yes' && $location) {
-            echo '<div class="eh-meta">' . esc_html($location) . '</div>';
+        if (!empty($settings['show_location']) && $settings['show_location'] === 'yes' && ($occ_location || $occ_location_address)) {
+            $parts = array_filter([$occ_location, $occ_location_address && $occ_location_address !== $occ_location ? $occ_location_address : '']);
+            echo '<div class="eh-meta eh-location"><strong>' . esc_html__('Locatie', 'event-hub') . ':</strong> ' . esc_html(implode(' — ', $parts)) . '</div>';
         }
         if (!empty($settings['show_price']) && $settings['show_price'] === 'yes' && $price !== '') {
             echo '<div class="eh-meta"><strong>' . esc_html__('Prijs', 'event-hub') . ':</strong> ' . esc_html($price) . '</div>';

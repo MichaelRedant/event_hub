@@ -30,19 +30,14 @@
                 eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
                 events: function(fetchInfo, success, fail){
                     var params = new URLSearchParams({
-                        action: 'event_hub_public_calendar',
                         start: fetchInfo.startStr,
                         end: fetchInfo.endStr
                     });
-                    fetch(EventHubPublicCalendar.ajaxUrl + '?' + params.toString(), {
+                    fetch(EventHubPublicCalendar.restUrl + '?' + params.toString(), {
                         credentials: 'same-origin'
                     }).then(function(r){ return r.json(); })
                     .then(function(payload){
-                        if (payload && payload.success) {
-                            success(payload.data || []);
-                        } else {
-                            fail(payload && payload.data ? payload.data : EventHubPublicCalendar.labels.error);
-                        }
+                        success(Array.isArray(payload) ? payload : []);
                     }).catch(function(err){
                         console.error('[EventHub] kalender', err);
                         fail(EventHubPublicCalendar.labels.error);

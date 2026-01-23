@@ -1,6 +1,9 @@
 <?php
 namespace EventHub;
 
+use WP_REST_Request;
+use WP_REST_Response;
+
 defined('ABSPATH') || exit;
 
 class CPT_Session
@@ -15,6 +18,23 @@ class CPT_Session
     {
         $this->registrations = $registrations ?? new Registrations();
         $this->emails        = $emails ?? new Emails($this->registrations);
+    }
+
+    public function register_rest_routes(): void
+    {
+        register_rest_route('event-hub/v1', '/admin/search-linked', [
+            'methods'             => \WP_REST_Server::CREATABLE,
+            'callback'            => [$this, 'rest_search_linked_events'],
+            'permission_callback' => static function (): bool {
+                return current_user_can('edit_posts');
+            },
+            'args' => [
+                'cpt'    => ['type' => 'string', 'required' => true],
+                'term'   => ['type' => 'string', 'required' => false],
+                'recent' => ['type' => 'boolean', 'required' => false],
+                'all'    => ['type' => 'boolean', 'required' => false],
+            ],
+        ]);
     }
 
     private function get_cpt(): string
@@ -241,6 +261,7 @@ class CPT_Session
             .eh-occ-box{border:1px solid #e5e7eb;border-radius:10px;background:#fff;padding:12px;margin-top:8px}
             #eh-occurrences-table th,#eh-occurrences-table td{vertical-align:top}
             #eh-occurrences-table input[type="datetime-local"]{min-width:190px}
+            #eh-occurrences-table input[type="text"]{width:100%}
         </style>';
         echo '<p>' . esc_html__('Voeg meerdere data toe. Elke datum heeft eigen capaciteit en boekingsvenster.', 'event-hub') . '</p>';
         echo '<div class="eh-occ-box">';
@@ -249,12 +270,14 @@ class CPT_Session
         echo '<th>' . esc_html__('Start', 'event-hub') . '</th>';
         echo '<th>' . esc_html__('Einde', 'event-hub') . '</th>';
         echo '<th>' . esc_html__('Capaciteit', 'event-hub') . '</th>';
+        echo '<th>' . esc_html__('Locatie naam', 'event-hub') . '</th>';
+        echo '<th>' . esc_html__('Adres', 'event-hub') . '</th>';
         echo '<th>' . esc_html__('Registraties openen', 'event-hub') . '</th>';
         echo '<th>' . esc_html__('Registraties sluiten', 'event-hub') . '</th>';
         echo '<th></th>';
         echo '</tr></thead><tbody>';
         if (!$occurrences) {
-            $occurrences[] = ['id' => '', 'date_start' => '', 'date_end' => '', 'capacity' => '', 'booking_open' => '', 'booking_close' => ''];
+            $occurrences[] = ['id' => '', 'date_start' => '', 'date_end' => '', 'capacity' => '', 'location_name' => '', 'location_address' => '', 'booking_open' => '', 'booking_close' => ''];
         }
         foreach ($occurrences as $index => $occurrence) {
             $this->render_occurrence_row($index, $occurrence);
@@ -285,7 +308,7 @@ class CPT_Session
         })();
         </script>
         <template id="eh-occurrence-row-template">
-            <?php $this->render_occurrence_row('__i__', ['id'=>'','date_start'=>'','date_end'=>'','capacity'=>'','booking_open'=>'','booking_close'=>''], true); ?>
+            <?php $this->render_occurrence_row('__i__', ['id'=>'','date_start'=>'','date_end'=>'','capacity'=>'','location_name'=>'','location_address'=>'','booking_open'=>'','booking_close'=>''], true); ?>
         </template>
         <?php
         echo '</div>';
@@ -297,6 +320,8 @@ class CPT_Session
         $start = isset($occurrence['date_start']) ? (string) $occurrence['date_start'] : '';
         $end = isset($occurrence['date_end']) ? (string) $occurrence['date_end'] : '';
         $capacity = isset($occurrence['capacity']) ? (string) $occurrence['capacity'] : '';
+        $location_name = isset($occurrence['location_name']) ? (string) $occurrence['location_name'] : '';
+        $location_address = isset($occurrence['location_address']) ? (string) $occurrence['location_address'] : '';
         $booking_open = isset($occurrence['booking_open']) ? (string) $occurrence['booking_open'] : '';
         $booking_close = isset($occurrence['booking_close']) ? (string) $occurrence['booking_close'] : '';
         $start_val = $start ? esc_attr(date('Y-m-d\TH:i', strtotime($start))) : '';
@@ -310,6 +335,8 @@ class CPT_Session
         echo '<input type="datetime-local" name="eh_occurrences[date_start][]" value="' . $start_val . '" /></td>';
         echo '<td><input type="datetime-local" name="eh_occurrences[date_end][]" value="' . $end_val . '" /></td>';
         echo '<td><input type="number" min="0" name="eh_occurrences[capacity][]" value="' . esc_attr($capacity) . '" placeholder="0" /></td>';
+        echo '<td><input type="text" name="eh_occurrences[location_name][]" value="' . esc_attr($location_name) . '" placeholder="' . esc_attr__('Locatie naam', 'event-hub') . '" /></td>';
+        echo '<td><input type="text" name="eh_occurrences[location_address][]" value="' . esc_attr($location_address) . '" placeholder="' . esc_attr__('Adres', 'event-hub') . '" /></td>';
         echo '<td><input type="datetime-local" name="eh_occurrences[booking_open][]" value="' . $bo_val . '" /></td>';
         echo '<td><input type="datetime-local" name="eh_occurrences[booking_close][]" value="' . $bc_val . '" /></td>';
         echo '<td><button type="button" class="button-link-delete eh-occurrence-remove">' . esc_html__('Verwijder', 'event-hub') . '</button></td>';
@@ -1812,6 +1839,7 @@ class CPT_Session
         $new['title'] = __('Evenement', 'event-hub');
         $new['eh_dates'] = __('Planning', 'event-hub');
         $new['eh_location'] = __('Locatie', 'event-hub');
+        $new['eh_registrations'] = __('Inschrijvingen', 'event-hub');
         $new['eh_capacity'] = __('Capaciteit', 'event-hub');
         $new['eh_occupancy'] = __('Bezetting', 'event-hub');
         $new['eh_status'] = __('Status', 'event-hub');
@@ -1832,7 +1860,7 @@ class CPT_Session
 
     public function render_admin_column(string $column, int $post_id): void
     {
-        if (!in_array($column, ['eh_dates', 'eh_location', 'eh_capacity', 'eh_occupancy', 'eh_status'], true)) {
+        if (!in_array($column, ['eh_dates', 'eh_location', 'eh_capacity', 'eh_occupancy', 'eh_status', 'eh_registrations'], true)) {
             return;
         }
         $state = $this->registrations->get_capacity_state($post_id);
@@ -1840,7 +1868,21 @@ class CPT_Session
         if ($column === 'eh_dates') {
             $start = get_post_meta($post_id, '_eh_date_start', true);
             $end = get_post_meta($post_id, '_eh_date_end', true);
-            if ($start) {
+            $occurrences = $this->registrations->get_occurrences($post_id);
+            if ($occurrences) {
+                $first = $occurrences[0];
+                $first_date = isset($first['date_start']) ? $first['date_start'] : '';
+                if ($first_date) {
+                    $start_label = date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($first_date));
+                    echo esc_html($start_label);
+                    $count = count($occurrences);
+                    if ($count > 1) {
+                        echo '<br><span class="description">' . esc_html(sprintf(_n('%d datum', '%d datums', $count, 'event-hub'), $count)) . '</span>';
+                    }
+                } else {
+                    echo '—';
+                }
+            } elseif ($start) {
                 $start_label = date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start));
                 $end_label = $end ? date_i18n(get_option('time_format'), strtotime($end)) : '';
                 echo esc_html($start_label);
@@ -1869,6 +1911,27 @@ class CPT_Session
         if ($column === 'eh_capacity') {
             $capacity = $state['capacity'] > 0 ? $state['capacity'] : __('Onbeperkt', 'event-hub');
             echo '<strong>' . esc_html((string) $capacity) . '</strong>';
+            return;
+        }
+
+        if ($column === 'eh_registrations') {
+            $occurrences = $this->registrations->get_occurrences($post_id);
+            $booked_total = 0;
+            $waitlist_total = 0;
+            if ($occurrences) {
+                foreach ($occurrences as $occ) {
+                    $occ_id = (int) ($occ['id'] ?? 0);
+                    $booked_total += $this->registrations->count_booked($post_id, $occ_id);
+                    $waitlist_total += $this->registrations->count_waitlist($post_id, $occ_id);
+                }
+            } else {
+                $booked_total = $this->registrations->count_booked($post_id);
+                $waitlist_total = $this->registrations->count_waitlist($post_id);
+            }
+            echo '<strong>' . esc_html((string) $booked_total) . '</strong>';
+            if ($waitlist_total > 0) {
+                echo '<br><span class="eh-badge-pill status-waitlist">' . esc_html(sprintf(__('Wachtlijst: %d', 'event-hub'), $waitlist_total)) . '</span>';
+            }
             return;
         }
 
@@ -1922,7 +1985,12 @@ class CPT_Session
         echo '<style>
         .column-eh_dates{width:190px}
         .column-eh_location{width:140px}
+        .column-eh_registrations{width:110px}
         .column-eh_capacity,.column-eh_occupancy,.column-eh_status{width:130px}
+        .column-eh_dates,.column-eh_location,.column-eh_registrations,.column-eh_capacity,.column-eh_occupancy,.column-eh_status{white-space:normal!important;word-break:break-word;line-height:1.4;}
+        @media (max-width:1024px){
+            .column-eh_dates,.column-eh_location,.column-eh_registrations,.column-eh_capacity,.column-eh_occupancy,.column-eh_status{width:auto!important;min-width:120px;}
+        }
         .eh-progress{background:#eef1f6;border-radius:999px;height:6px;margin-bottom:4px;overflow:hidden}
         .eh-progress-bar{display:block;height:100%;background:#2271b1;border-radius:999px}
         .eh-progress-label{font-size:12px;color:#4b5563;font-weight:600}
@@ -2062,6 +2130,8 @@ class CPT_Session
             $starts = $raw['date_start'] ?? [];
             $ends = $raw['date_end'] ?? [];
             $capacities = $raw['capacity'] ?? [];
+            $location_names = $raw['location_name'] ?? [];
+            $location_addresses = $raw['location_address'] ?? [];
             $opens = $raw['booking_open'] ?? [];
             $closes = $raw['booking_close'] ?? [];
             $used_ids = [];
@@ -2078,6 +2148,8 @@ class CPT_Session
                 if ($id <= 0) {
                     $id = $this->generate_occurrence_id($used_ids);
                 }
+                $loc_name_raw = isset($location_names[$i]) ? sanitize_text_field((string) $location_names[$i]) : '';
+                $loc_address_raw = isset($location_addresses[$i]) ? sanitize_text_field((string) $location_addresses[$i]) : '';
                 $used_ids[] = $id;
                 $occurrences[] = [
                     'id' => $id,
@@ -2086,6 +2158,8 @@ class CPT_Session
                     'capacity' => $capacity_raw !== '' ? (int) $capacity_raw : 0,
                     'booking_open' => $open_raw ? gmdate('Y-m-d H:i:00', strtotime($open_raw)) : '',
                     'booking_close' => $close_raw ? gmdate('Y-m-d H:i:00', strtotime($close_raw)) : '',
+                    'location_name' => $loc_name_raw,
+                    'location_address' => $loc_address_raw,
                 ];
             }
             if ($occurrences) {
@@ -2402,6 +2476,154 @@ class CPT_Session
             }
         }
         wp_send_json_success($items);
+    }
+
+    public function rest_search_linked_events(WP_REST_Request $request): WP_REST_Response
+    {
+        $cpt = sanitize_key((string) $request->get_param('cpt'));
+        $term = sanitize_text_field((string) $request->get_param('term'));
+        $use_recent = (bool) $request->get_param('recent');
+        $use_all = (bool) $request->get_param('all');
+
+        if ($cpt === '' || !post_type_exists($cpt)) {
+            $resolved = Settings::resolve_post_type_slug($cpt);
+            if ($resolved && post_type_exists($resolved)) {
+                $cpt = $resolved;
+            }
+        }
+        if ($cpt === '') {
+            return new \WP_Error('invalid_cpt', __('Ongeldige CPT-slug.', 'event-hub'), ['status' => 400]);
+        }
+        if (!post_type_exists($cpt)) {
+            global $wpdb;
+            $exists = $wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE post_type = %s LIMIT 1", $cpt));
+            if (!$exists) {
+                return new \WP_Error('invalid_cpt', __('Ongeldige CPT-slug.', 'event-hub'), ['status' => 400]);
+            }
+        }
+        if ($use_recent) {
+            $use_all = false;
+            $term = '';
+        }
+        if ($use_all) {
+            $term = '';
+        }
+        $term = trim($term);
+        $items = [];
+        $numeric_id = 0;
+        if ($term !== '') {
+            if (ctype_digit($term)) {
+                $numeric_id = (int) $term;
+            } elseif (preg_match('/^#(\d+)$/', $term, $m)) {
+                $numeric_id = (int) $m[1];
+            }
+        }
+        if ($numeric_id > 0) {
+            $post = get_post($numeric_id);
+            if ($post && $post->post_type === $cpt) {
+                $items[] = [
+                    'id' => $post->ID,
+                    'title' => html_entity_decode(get_the_title($post->ID), ENT_QUOTES, 'UTF-8'),
+                    'status' => $post->post_status,
+                    'edit_link' => get_edit_post_link($post->ID, 'raw'),
+                    'view_link' => get_permalink($post->ID),
+                ];
+            }
+        }
+
+        $query_args = [
+            'post_type' => $cpt,
+            'post_status' => 'any',
+            'posts_per_page' => $use_recent ? 10 : ($use_all ? 50 : 20),
+            'no_found_rows' => true,
+            'ignore_sticky_posts' => true,
+        ];
+        if ($use_recent) {
+            $query_args['orderby'] = 'date';
+            $query_args['order'] = 'DESC';
+        } elseif ($use_all) {
+            $query_args['orderby'] = 'title';
+            $query_args['order'] = 'ASC';
+        } else {
+            $query_args['orderby'] = 'title';
+            $query_args['order'] = 'ASC';
+        }
+        $query = null;
+        $use_term_filter = (!$use_recent && !$use_all && $term !== '');
+        if ($use_term_filter) {
+            global $wpdb;
+            $like = '%' . $wpdb->esc_like($term) . '%';
+            $filter = static function (string $where) use ($wpdb, $like): string {
+                return $where . $wpdb->prepare(" AND ({$wpdb->posts}.post_title LIKE %s OR {$wpdb->posts}.post_name LIKE %s)", $like, $like);
+            };
+            add_filter('posts_where', $filter);
+            $query = new \WP_Query($query_args);
+            remove_filter('posts_where', $filter);
+        } else {
+            $query = new \WP_Query($query_args);
+        }
+        if (!$query->have_posts()) {
+            $fallback_args = $query_args;
+            $fallback_args['suppress_filters'] = true;
+            if ($use_term_filter) {
+                global $wpdb;
+                $like = '%' . $wpdb->esc_like($term) . '%';
+                $filter = static function (string $where) use ($wpdb, $like): string {
+                    return $where . $wpdb->prepare(" AND ({$wpdb->posts}.post_title LIKE %s OR {$wpdb->posts}.post_name LIKE %s)", $like, $like);
+                };
+                add_filter('posts_where', $filter);
+                $query = new \WP_Query($fallback_args);
+                remove_filter('posts_where', $filter);
+            } else {
+                $query = new \WP_Query($fallback_args);
+            }
+        }
+        if (!$query->have_posts()) {
+            global $wpdb;
+            $statuses = ['publish', 'future', 'draft', 'pending', 'private'];
+            $status_placeholders = implode(', ', array_fill(0, count($statuses), '%s'));
+            $params = array_merge([$cpt], $statuses);
+            $where = "post_type = %s AND post_status IN ({$status_placeholders})";
+            if ($use_term_filter) {
+                $like = '%' . $wpdb->esc_like($term) . '%';
+                $where .= " AND ({$wpdb->posts}.post_title LIKE %s OR {$wpdb->posts}.post_name LIKE %s)";
+                $params[] = $like;
+                $params[] = $like;
+            }
+            $limit = $use_recent ? 10 : ($use_all ? 50 : 20);
+            $order_by = $use_recent ? "{$wpdb->posts}.post_date DESC" : "{$wpdb->posts}.post_title ASC";
+            $sql = "SELECT ID, post_title, post_status FROM {$wpdb->posts} WHERE {$where} ORDER BY {$order_by} LIMIT %d";
+            $params[] = $limit;
+            $rows = $wpdb->get_results($wpdb->prepare($sql, ...$params));
+            if ($rows) {
+                foreach ($rows as $row) {
+                    $items[] = [
+                        'id' => (int) $row->ID,
+                        'title' => html_entity_decode((string) $row->post_title, ENT_QUOTES, 'UTF-8'),
+                        'status' => (string) $row->post_status,
+                        'edit_link' => get_edit_post_link((int) $row->ID, 'raw'),
+                        'view_link' => get_permalink((int) $row->ID),
+                    ];
+                }
+            }
+            return rest_ensure_response($items);
+        }
+        if ($query->have_posts()) {
+            foreach ($query->posts as $item) {
+                if ($numeric_id > 0 && $item->ID === $numeric_id) {
+                    continue;
+                }
+                $items[] = [
+                    'id' => $item->ID,
+                    'title' => html_entity_decode(get_the_title($item->ID), ENT_QUOTES, 'UTF-8'),
+                    'status' => $item->post_status,
+                    'edit_link' => get_edit_post_link($item->ID, 'raw'),
+                    'view_link' => get_permalink($item->ID),
+                ];
+            }
+        }
+
+        return rest_ensure_response($items);
     }
 
     private function get_linked_event_options(string $cpt, int $limit = 200): array

@@ -30,25 +30,24 @@
             eventTimeFormat: { hour: '2-digit', minute: '2-digit', hour12: false },
             events: function(fetchInfo, successCallback, failureCallback){
                 var params = new URLSearchParams({
-                    action: 'event_hub_calendar_events',
                     start: fetchInfo.startStr,
-                    end: fetchInfo.endStr,
-                    _ajax_nonce: eventHubCalendar.nonce
+                    end: fetchInfo.endStr
                 });
-                fetch(eventHubCalendar.ajaxUrl + '?' + params.toString(), {
-                    credentials: 'same-origin'
-                }).then(function(response){
-                    return response.json();
-                }).then(function(payload){
-                    if (payload && payload.success) {
-                        var events = payload.data || [];
-                        successCallback(events);
-                    } else {
-                        failureCallback(payload && payload.data ? payload.data : eventHubCalendar.labels.error);
+                fetch(eventHubCalendar.restUrl + '?' + params.toString(), {
+                    credentials: 'same-origin',
+                    headers: {
+                        'X-WP-Nonce': eventHubCalendar.nonce
                     }
+                }).then(function(response){
+                    if (!response.ok) {
+                        throw new Error('Request failed');
+                    }
+                    return response.json();
+                }).then(function(events){
+                    successCallback(Array.isArray(events) ? events : []);
                 }).catch(function(error){
                     console.error('Event Hub kalender', error);
-                    failureCallback(error);
+                    failureCallback(error || eventHubCalendar.labels.error);
                 });
             },
             eventClick: function(info){
@@ -108,5 +107,112 @@
                 refilter();
             });
         }
+
+        // Quick peek modal
+        var modal;
+        function closeModal() {
+            if (modal) {
+                modal.remove();
+                modal = null;
+            }
+        }
+
+        function badge(text, cls) {
+            var span = document.createElement('span');
+            span.className = 'eh-badge-pill ' + (cls || '');
+            span.textContent = text;
+            return span;
+        }
+
+        calendar.setOption('eventClick', function(info){
+            info.jsEvent.preventDefault();
+            var ev = info.event;
+            var props = ev.extendedProps || {};
+            closeModal();
+
+            modal = document.createElement('div');
+            modal.className = 'eh-cal-modal';
+            modal.innerHTML = '<div class="eh-cal-modal__backdrop"></div><div class="eh-cal-modal__card"><button class="eh-cal-modal__close" aria-label="Close">×</button><div class="eh-cal-modal__body"></div></div>';
+            document.body.appendChild(modal);
+
+            modal.querySelector('.eh-cal-modal__close').addEventListener('click', closeModal);
+            modal.querySelector('.eh-cal-modal__backdrop').addEventListener('click', closeModal);
+
+            var body = modal.querySelector('.eh-cal-modal__body');
+            var title = document.createElement('h3');
+            title.textContent = ev.title || '';
+            body.appendChild(title);
+
+            var meta = document.createElement('div');
+            meta.className = 'eh-cal-meta';
+            var status = (props.status || '').toLowerCase();
+            meta.appendChild(badge(status ? status : 'status', 'status-' + status));
+            if (props.is_online) {
+                meta.appendChild(badge('Online', 'status-online'));
+            } else if (props.location) {
+                var loc = badge(props.location, '');
+                loc.classList.add('status-location');
+                meta.appendChild(loc);
+            }
+            body.appendChild(meta);
+
+            var when = document.createElement('div');
+            when.className = 'eh-cal-when';
+            var start = ev.start ? ev.start.toLocaleString() : '';
+            var end = ev.end ? ev.end.toLocaleString() : '';
+            when.textContent = end ? (start + ' - ' + end) : start;
+            body.appendChild(when);
+
+            var stats = document.createElement('div');
+            stats.className = 'eh-cal-stats';
+            var capacity = props.capacity && props.capacity > 0 ? props.capacity : null;
+            var booked = props.booked || 0;
+            var waitlist = props.waitlist || 0;
+            var items = [
+                {label: 'Inschrijvingen', value: booked + (capacity ? (' / ' + capacity) : '')},
+                {label: 'Wachtlijst', value: waitlist}
+            ];
+            items.forEach(function(item){
+                var row = document.createElement('div');
+                row.className = 'eh-cal-stat';
+                row.innerHTML = '<span>' + item.label + '</span><strong>' + item.value + '</strong>';
+                stats.appendChild(row);
+            });
+            body.appendChild(stats);
+
+            var actions = document.createElement('div');
+            actions.className = 'eh-cal-actions';
+            var eventId = props.event_id;
+            var occId = props.occurrence_id || '';
+            function buildUrl(base, extra) {
+                var url = base;
+                url += (base.indexOf('?') === -1 ? '?' : '&') + 'session_id=' + encodeURIComponent(eventId);
+                if (occId) {
+                    url += '&occurrence_id=' + encodeURIComponent(occId);
+                }
+                if (extra) {
+                    url += extra;
+                }
+                return url;
+            }
+            var dashboardUrl = eventHubCalendar.dashboardBase + '&event_id=' + encodeURIComponent(eventId) + (occId ? '&occurrence_id=' + encodeURIComponent(occId) : '');
+            var regsUrl = buildUrl(eventHubCalendar.registrationsBase);
+            var newRegUrl = buildUrl(eventHubCalendar.newRegistrationBase, '&action=new');
+
+            [
+                {label:'Dashboard', url: dashboardUrl, primary:true},
+                {label:'Registraties', url: regsUrl},
+                {label:'Nieuwe inschrijving', url: newRegUrl}
+            ].forEach(function(btn){
+                var a = document.createElement('a');
+                a.href = btn.url;
+                a.target = '_blank';
+                a.rel = 'noopener';
+                a.textContent = btn.label;
+                a.className = 'button' + (btn.primary ? ' button-primary' : '');
+                actions.appendChild(a);
+            });
+            body.appendChild(actions);
+        });
     });
 })();

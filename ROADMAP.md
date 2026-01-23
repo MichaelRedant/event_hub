@@ -9,7 +9,8 @@ eigen deelnemerslijst.
 
 Scope-idee:
 - Introduceer "occurrences" per event (sub-entity of herhaalvelden).
-- Elke occurrence heeft: datum/tijd, capaciteit, booking window, status.
+- Elke occurren
+- ce heeft: datum/tijd, capaciteit, booking window, status.
 - Registraties koppelen aan occurrence i.p.v. alleen parent event.
 - UI: keuze van datum in formulier + aparte lijsten per occurrence.
 - Kalender en admin-overzichten tonen occurrence als losse items.

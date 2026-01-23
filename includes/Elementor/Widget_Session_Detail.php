@@ -134,6 +134,49 @@ class Widget_Session_Detail extends Widget_Base
             'label_block' => true,
         ]);
 
+        $this->add_control('occurrence_layout', [
+            'label' => __('Datumkeuze stijl', 'event-hub'),
+            'type' => Controls_Manager::SELECT,
+            'default' => 'cards',
+            'options' => [
+                'cards' => __('Kaartjes (radio)', 'event-hub'),
+                'select' => __('Dropdown', 'event-hub'),
+            ],
+            'description' => __('Kies of de datums als kaartjes (aanbevolen) of als dropdown getoond worden.', 'event-hub'),
+        ]);
+
+        $this->add_control('occurrence_columns', [
+            'label' => __('Datumkolommen (cards)', 'event-hub'),
+            'type' => Controls_Manager::SELECT,
+            'default' => 'auto',
+            'options' => [
+                'auto' => __('Automatisch', 'event-hub'),
+                '1' => __('1 kolom (onder elkaar)', 'event-hub'),
+                '2' => __('2 kolommen', 'event-hub'),
+                '3' => __('3 kolommen', 'event-hub'),
+            ],
+            'description' => __('Pas de kolomweergave van de kaartjes aan. Kies 1 kolom om alles onder elkaar te tonen.', 'event-hub'),
+            'condition' => [
+                'occurrence_layout' => 'cards',
+            ],
+        ]);
+
+        $this->add_control('occurrence_gap', [
+            'label' => __('Ruimte tussen kaartjes', 'event-hub'),
+            'type' => Controls_Manager::SLIDER,
+            'size_units' => ['px'],
+            'range' => [
+                'px' => ['min' => 0, 'max' => 32],
+            ],
+            'default' => [
+                'size' => 10,
+                'unit' => 'px',
+            ],
+            'condition' => [
+                'occurrence_layout' => 'cards',
+            ],
+        ]);
+
         $this->add_control('hide_when_closed', [
             'label' => __('Formulier verbergen als gesloten', 'event-hub'),
             'type' => Controls_Manager::SWITCHER,
@@ -174,6 +217,22 @@ class Widget_Session_Detail extends Widget_Base
             'type' => Controls_Manager::SWITCHER,
             'return_value' => 'yes',
             'default' => 'yes',
+        ]);
+
+        $this->add_control('required_fields', [
+            'label' => __('Optionele velden verplicht maken', 'event-hub'),
+            'type' => Controls_Manager::SELECT2,
+            'multiple' => true,
+            'label_block' => true,
+            'options' => [
+                'phone' => __('Telefoon', 'event-hub'),
+                'company' => __('Bedrijf', 'event-hub'),
+                'vat' => __('BTW-nummer', 'event-hub'),
+                'role' => __('Rol', 'event-hub'),
+                'people_count' => __('Aantal personen', 'event-hub'),
+            ],
+            'description' => __('Basisvelden (voornaam, familienaam, e-mail) blijven altijd verplicht. Kies hier extra velden die verplicht moeten zijn.', 'event-hub'),
+            'default' => [],
         ]);
 
         $this->end_controls_section();
@@ -909,6 +968,13 @@ class Widget_Session_Detail extends Widget_Base
         $success_message_text = !empty($settings['success_message']) ? $settings['success_message'] : __('Bedankt! We hebben je inschrijving ontvangen.', 'event-hub');
         $show_marketing = !empty($settings['show_marketing_optin']) && $settings['show_marketing_optin'] === 'yes';
         $hide_fields = $this->get_form_hide_fields($session_id);
+        $required_fields_setting = $settings['required_fields'] ?? [];
+        $required_fields = is_array($required_fields_setting) ? array_map('sanitize_key', $required_fields_setting) : [];
+        $occ_layout = !empty($settings['occurrence_layout']) ? $settings['occurrence_layout'] : 'cards';
+        $occ_use_cards = $occ_layout !== 'select';
+        $date_format = 'd-m-Y';
+        $occ_columns_setting = $settings['occurrence_columns'] ?? 'auto';
+        $occ_gap_setting = $settings['occurrence_gap'] ?? [];
 
         wp_enqueue_script('event-hub-frontend');
 
@@ -960,61 +1026,211 @@ class Widget_Session_Detail extends Widget_Base
         echo '<div class="field" style="display:none !important;"><label>' . esc_html__('Laat leeg', 'event-hub') . '</label><input type="text" name="_eh_hp" value=""></div>';
         echo '<input type="hidden" name="session_id" value="' . esc_attr((string) $session_id) . '" />';
         if ($occurrences) {
-            echo '<div class="field full"><label for="occurrence_id">' . esc_html__('Kies datum', 'event-hub') . ' *</label>';
-            echo '<select name="occurrence_id" id="occurrence_id" required>';
-            echo '<option value="">' . esc_html__('Maak een keuze', 'event-hub') . '</option>';
-            foreach ($occurrences as $occ) {
-                $occ_id = (int) ($occ['id'] ?? 0);
-                if ($occ_id <= 0) {
-                    continue;
-                }
-                $occ_state = $this->registrations->get_capacity_state($session_id, $occ_id);
-                $occ_start = $occ['date_start'] ?? '';
-                $occ_end = $occ['date_end'] ?? '';
-                $occ_date = $occ_start ? date_i18n(get_option('date_format'), strtotime($occ_start)) : '';
-                $occ_time_start = $occ_start ? date_i18n(get_option('time_format'), strtotime($occ_start)) : '';
-                $occ_time_end = $occ_end ? date_i18n(get_option('time_format'), strtotime($occ_end)) : '';
-                $occ_time_range = $occ_time_start && $occ_time_end ? $occ_time_start . ' - ' . $occ_time_end : $occ_time_start;
-                $occ_avail = $occ_state['capacity'] > 0
-                    ? sprintf(_n('%d plaats beschikbaar', '%d plaatsen beschikbaar', $occ_state['available'], 'event-hub'), $occ_state['available'])
-                    : __('Onbeperkt', 'event-hub');
-                $occ_waitlist = $occ_state['waitlist'] > 0
-                    ? sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $occ_state['waitlist'], 'event-hub'), $occ_state['waitlist'])
-                    : __('Geen wachtlijst', 'event-hub');
-                $label_parts = array_filter([$occ_date, $occ_time_range, $occ_avail]);
-                $label = implode(' | ', $label_parts);
-                $selected = selected($selected_occurrence_id, $occ_id, false);
-                echo '<option value="' . esc_attr((string) $occ_id) . '"' . $selected
-                    . ' data-date-label="' . esc_attr($occ_date) . '"'
-                    . ' data-time-range="' . esc_attr($occ_time_range) . '"'
-                    . ' data-availability="' . esc_attr($occ_avail) . '"'
-                    . ' data-waitlist="' . esc_attr($occ_waitlist) . '"'
-                    . ' data-full="' . esc_attr($occ_state['is_full'] ? '1' : '0') . '"'
-                    . '>' . esc_html($label ?: (string) $occ_id) . '</option>';
+            // Basisdata (hoofd-event) die we in beide layouts gebruiken.
+            $base_state = $this->registrations->get_capacity_state($session_id, 0);
+            $base_date = get_post_meta($session_id, '_eh_date_start', true);
+            $base_end = get_post_meta($session_id, '_eh_date_end', true);
+            $base_title = get_the_title($session_id);
+            $base_date_label = $base_date ? date_i18n($date_format, strtotime($base_date)) : '';
+            $base_time_start = $base_date ? date_i18n(get_option('time_format'), strtotime($base_date)) : '';
+            $base_time_end = $base_end ? date_i18n(get_option('time_format'), strtotime($base_end)) : '';
+            $base_time_range = $base_time_start && $base_time_end ? $base_time_start . ' - ' . $base_time_end : $base_time_start;
+            $base_avail = $base_state['capacity'] > 0
+                ? sprintf(_n('%d plaats vrij', '%d plaatsen vrij', $base_state['available'], 'event-hub'), $base_state['available'])
+                : __('Onbeperkt', 'event-hub');
+            $base_waitlist = $base_state['waitlist'] > 0
+                ? sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $base_state['waitlist'], 'event-hub'), $base_state['waitlist'])
+                : __('Geen wachtlijst', 'event-hub');
+            $base_address = get_post_meta($session_id, '_eh_address', true);
+            $base_location_name = get_post_meta($session_id, '_eh_location', true);
+            $base_location_label = $base_location_name ?: $base_address;
+
+            $occ_style = [];
+            if ($occ_columns_setting === 'auto') {
+                $occ_style[] = '--eh-occ-columns:auto-fit';
+            } else {
+                $occ_style[] = '--eh-occ-columns:' . max(1, (int) $occ_columns_setting);
             }
-            echo '</select></div>';
+            if (!empty($occ_gap_setting['size'])) {
+                $occ_style[] = '--eh-occ-gap:' . esc_attr($occ_gap_setting['size']) . ($occ_gap_setting['unit'] ?? 'px');
+            }
+            $occ_style_attr = $occ_style ? ' style="' . esc_attr(implode(';', $occ_style)) . '"' : '';
+
+            echo '<div class="field full eh-occ-wrapper"' . $occ_style_attr . '>';
+            if ($occ_use_cards) {
+                echo '<span class="eh-occ-label">' . esc_html__('Kies datum', 'event-hub') . ' *</span>';
+                echo '<div class="eh-occ-list" role="radiogroup">';
+                $base_checked = $selected_occurrence_id === 0 ? ' checked' : '';
+
+                echo '<label class="eh-occ-card">';
+                echo '<input type="radio" name="occurrence_id" value="0"' . $base_checked
+                    . ' data-date-label="' . esc_attr($base_date_label) . '"'
+                    . ' data-time-range="' . esc_attr($base_time_range) . '"'
+                    . ' data-availability="' . esc_attr($base_avail) . '"'
+                    . ' data-waitlist="' . esc_attr($base_waitlist) . '"'
+                    . ' data-location="' . esc_attr($base_location_name) . '"'
+                    . ' data-location-address="' . esc_attr($base_address) . '"'
+                    . ' data-full="' . esc_attr($base_state['is_full'] ? '1' : '0') . '"'
+                    . ' required />';
+                echo '<div class="eh-occ-card__body">';
+                echo '<div class="eh-occ-card__header">';
+                echo '<div class="eh-occ-card__date">' . esc_html($base_date_label ?: $base_title) . '</div>';
+                if ($base_avail) {
+                    echo '<span class="eh-occ-badge">' . esc_html($base_avail) . '</span>';
+                }
+                echo '</div>';
+                echo '<div class="eh-occ-card__meta">';
+                if ($base_time_range) {
+                    echo '<span>' . esc_html($base_time_range) . '</span>';
+                }
+                if ($base_location_label) {
+                    echo '<span class="eh-occ-card__loc">' . esc_html($base_location_label) . '</span>';
+                }
+                echo '</div>';
+                echo '</div>';
+                echo '</label>';
+
+                foreach ($occurrences as $occ) {
+                    $occ_id = (int) ($occ['id'] ?? 0);
+                    if ($occ_id <= 0) {
+                        continue;
+                    }
+                    $occ_state = $this->registrations->get_capacity_state($session_id, $occ_id);
+                    $occ_start = $occ['date_start'] ?? '';
+                    $occ_end = $occ['date_end'] ?? '';
+                $occ_date = $occ_start ? date_i18n($date_format, strtotime($occ_start)) : '';
+                    $occ_time_start = $occ_start ? date_i18n(get_option('time_format'), strtotime($occ_start)) : '';
+                    $occ_time_end = $occ_end ? date_i18n(get_option('time_format'), strtotime($occ_end)) : '';
+                    $occ_time_range = $occ_time_start && $occ_time_end ? $occ_time_start . ' - ' . $occ_time_end : $occ_time_start;
+                    $occ_avail = $occ_state['capacity'] > 0
+                        ? sprintf(_n('%d plaats vrij', '%d plaatsen vrij', $occ_state['available'], 'event-hub'), $occ_state['available'])
+                        : __('Onbeperkt', 'event-hub');
+                    $occ_waitlist = $occ_state['waitlist'] > 0
+                        ? sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $occ_state['waitlist'], 'event-hub'), $occ_state['waitlist'])
+                        : __('Geen wachtlijst', 'event-hub');
+                    $occ_address = $occ['location_address'] ?? '';
+                    $occ_location_name = $occ['location_name'] ?? '';
+                    $occ_location_label = $occ_location_name ?: $occ_address;
+                    $checked = $selected_occurrence_id === $occ_id ? ' checked' : '';
+
+                    echo '<label class="eh-occ-card">';
+                    echo '<input type="radio" name="occurrence_id" value="' . esc_attr((string) $occ_id) . '"' . $checked
+                        . ' data-date-label="' . esc_attr($occ_date) . '"'
+                        . ' data-time-range="' . esc_attr($occ_time_range) . '"'
+                        . ' data-availability="' . esc_attr($occ_avail) . '"'
+                        . ' data-waitlist="' . esc_attr($occ_waitlist) . '"'
+                        . ' data-location="' . esc_attr($occ_location_name) . '"'
+                        . ' data-location-address="' . esc_attr($occ_address) . '"'
+                        . ' data-full="' . esc_attr($occ_state['is_full'] ? '1' : '0') . '"'
+                        . ' />';
+                    echo '<div class="eh-occ-card__body">';
+                    echo '<div class="eh-occ-card__header">';
+                    echo '<div class="eh-occ-card__date">' . esc_html($occ_date ?: $occ_id) . '</div>';
+                    if ($occ_avail) {
+                        echo '<span class="eh-occ-badge">' . esc_html($occ_avail) . '</span>';
+                    }
+                    echo '</div>';
+                    echo '<div class="eh-occ-card__meta">';
+                    if ($occ_time_range) {
+                        echo '<span>' . esc_html($occ_time_range) . '</span>';
+                    }
+                    if ($occ_location_label) {
+                        echo '<span class="eh-occ-card__loc">' . esc_html($occ_location_label) . '</span>';
+                    }
+                    echo '</div>';
+                    echo '</div>';
+                    echo '</label>';
+                }
+
+                echo '</div>'; // .eh-occ-list
+            } else {
+                echo '<label for="occurrence_id">' . esc_html__('Kies datum', 'event-hub') . ' *</label>';
+                echo '<select name="occurrence_id" id="occurrence_id" required>';
+                echo '<option value="">' . esc_html__('Maak een keuze', 'event-hub') . '</option>';
+
+                $base_selected = $selected_occurrence_id === 0 ? ' selected' : '';
+                $base_label_parts = array_filter([$base_title, $base_date_label, $base_time_range, $base_location_label, $base_avail]);
+                $base_option_label = implode(' | ', $base_label_parts);
+                echo '<option value="0"' . $base_selected
+                    . ' data-date-label="' . esc_attr($base_date_label) . '"'
+                    . ' data-time-range="' . esc_attr($base_time_range) . '"'
+                    . ' data-availability="' . esc_attr($base_avail) . '"'
+                    . ' data-waitlist="' . esc_attr($base_waitlist) . '"'
+                    . ' data-location="' . esc_attr($base_location_name) . '"'
+                    . ' data-location-address="' . esc_attr($base_address) . '"'
+                    . ' data-full="' . esc_attr($base_state['is_full'] ? '1' : '0') . '"'
+                    . '>' . esc_html($base_option_label ?: $base_title) . '</option>';
+
+                foreach ($occurrences as $occ) {
+                    $occ_id = (int) ($occ['id'] ?? 0);
+                    if ($occ_id <= 0) {
+                        continue;
+                    }
+                    $occ_state = $this->registrations->get_capacity_state($session_id, $occ_id);
+                    $occ_start = $occ['date_start'] ?? '';
+                    $occ_end = $occ['date_end'] ?? '';
+                    $occ_date = $occ_start ? date_i18n(get_option('date_format'), strtotime($occ_start)) : '';
+                    $occ_time_start = $occ_start ? date_i18n(get_option('time_format'), strtotime($occ_start)) : '';
+                    $occ_time_end = $occ_end ? date_i18n(get_option('time_format'), strtotime($occ_end)) : '';
+                    $occ_time_range = $occ_time_start && $occ_time_end ? $occ_time_start . ' - ' . $occ_time_end : $occ_time_start;
+                    $occ_avail = $occ_state['capacity'] > 0
+                        ? sprintf(_n('%d plaats vrij', '%d plaatsen vrij', $occ_state['available'], 'event-hub'), $occ_state['available'])
+                        : __('Onbeperkt', 'event-hub');
+                    $occ_waitlist = $occ_state['waitlist'] > 0
+                        ? sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $occ_state['waitlist'], 'event-hub'), $occ_state['waitlist'])
+                        : __('Geen wachtlijst', 'event-hub');
+                    $occ_address = $occ['location_address'] ?? '';
+                    $occ_location_name = $occ['location_name'] ?? '';
+                    $occ_label_parts = array_filter([$occ_date, $occ_time_range, $occ_location_name ?: $occ_address, $occ_avail]);
+                    $option_label = $occ_label_parts ? implode(' | ', $occ_label_parts) : (string) $occ_id;
+                    $selected = selected($selected_occurrence_id, $occ_id, false);
+                    echo '<option value="' . esc_attr((string) $occ_id) . '"' . $selected
+                        . ' data-date-label="' . esc_attr($occ_date) . '"'
+                        . ' data-time-range="' . esc_attr($occ_time_range) . '"'
+                        . ' data-availability="' . esc_attr($occ_avail) . '"'
+                        . ' data-waitlist="' . esc_attr($occ_waitlist) . '"'
+                        . ' data-location="' . esc_attr($occ_location_name) . '"'
+                        . ' data-location-address="' . esc_attr($occ_address) . '"'
+                        . ' data-full="' . esc_attr($occ_state['is_full'] ? '1' : '0') . '"'
+                        . '>' . esc_html($option_label) . '</option>';
+                }
+
+                echo '</select>';
+            }
+
+            $loc_name = $selected_occurrence ? ($selected_occurrence['location_name'] ?? '') : $base_location_name;
+            $loc_addr = $selected_occurrence ? ($selected_occurrence['location_address'] ?? '') : $base_address;
+            $loc_parts = array_filter([$loc_name, $loc_addr && $loc_addr !== $loc_name ? $loc_addr : '']);
+            $loc_text = $loc_parts ? implode(' - ', $loc_parts) : '';
+            echo '<div class="eh-meta eh-occurrence-location" data-ehevent-location>' . ($loc_text ? '<strong>' . esc_html__('Locatie', 'event-hub') . ':</strong> ' . esc_html($loc_text) : '') . '</div>';
+            echo '</div>';
         }
-        if ($waitlist_mode) {
-            echo '<input type="hidden" name="waitlist_opt_in" value="1" />';
-        }
+
+        $waitlist_style = $waitlist_mode ? '' : ' style="display:none"';
+        echo '<div class="field full checkbox" data-eventhub-waitlist-optin' . $waitlist_style . '><label><input type="checkbox" name="waitlist_opt_in" value="1"' . ($waitlist_mode ? ' checked' : '') . ' /> ' . esc_html__('Plaats me op de wachtlijst indien volzet.', 'event-hub') . '</label></div>';
         echo '<div class="eh-grid">';
         echo $this->input('first_name', __('Voornaam', 'event-hub'), true);
         echo $this->input('last_name', __('Familienaam', 'event-hub'), true);
         echo $this->input('email', __('E-mailadres', 'event-hub'), true, 'email');
         if (!in_array('phone', $hide_fields, true)) {
-            echo $this->input('phone', __('Telefoon', 'event-hub'));
+            $req = in_array('phone', $required_fields, true);
+            echo $this->input('phone', __('Telefoon', 'event-hub'), $req);
         }
         if (!in_array('company', $hide_fields, true)) {
-            echo $this->input('company', __('Bedrijf', 'event-hub'));
+            $req = in_array('company', $required_fields, true);
+            echo $this->input('company', __('Bedrijf', 'event-hub'), $req);
         }
         if (!in_array('vat', $hide_fields, true)) {
-            echo $this->input('vat', __('BTW-nummer', 'event-hub'));
+            $req = in_array('vat', $required_fields, true);
+            echo $this->input('vat', __('BTW-nummer', 'event-hub'), $req);
         }
         if (!in_array('role', $hide_fields, true)) {
-            echo $this->input('role', __('Rol', 'event-hub'));
+            $req = in_array('role', $required_fields, true);
+            echo $this->input('role', __('Rol', 'event-hub'), $req);
         }
         if (!in_array('people_count', $hide_fields, true)) {
-            echo $this->number('people_count', __('Aantal personen', 'event-hub'), $capacity > 0 ? $capacity : 99);
+            $req = in_array('people_count', $required_fields, true);
+            echo $this->number('people_count', __('Aantal personen', 'event-hub'), $capacity > 0 ? $capacity : 99, $req);
         }
         $extra_fields = $this->registrations->get_extra_fields($session_id);
         foreach ($extra_fields as $field) {
@@ -1051,7 +1267,20 @@ class Widget_Session_Detail extends Widget_Base
         echo '<input type="hidden" name="eh_captcha_token" id="eh_captcha_token" value="">';
 
         $submit_label = $waitlist_mode ? __('Op wachtlijst plaatsen', 'event-hub') : $button_label;
+        $cta_badge = '';
+        if ($waitlist_mode) {
+            $cta_badge = __('Wachtlijst', 'event-hub');
+        } elseif ($state['capacity'] > 0) {
+            $cta_badge = sprintf(_n('%d plaats vrij', '%d plaatsen vrij', $state['available'], 'event-hub'), $state['available']);
+        } elseif ($is_full) {
+            $cta_badge = __('Volzet', 'event-hub');
+        } else {
+            $cta_badge = __('Beschikbaar', 'event-hub');
+        }
+        echo '<div class="eh-cta-wrap">';
+        echo '<span class="eh-cta-badge" data-eventhub-cta-badge>' . esc_html($cta_badge) . '</span>';
         echo '<button type="submit" class="eh-btn">' . esc_html($submit_label) . '</button>';
+        echo '</div>';
         echo '</form>';
         echo '</div>';
     }
@@ -1151,11 +1380,12 @@ class Widget_Session_Detail extends Widget_Base
         return '<div class="field"><label for="' . esc_attr($name) . '">' . esc_html($label . $asterisk) . '</label><input type="' . esc_attr($type) . '" id="' . esc_attr($name) . '" name="' . esc_attr($name) . '" value="' . esc_attr($value) . '"' . $req . ' /></div>';
     }
 
-    protected function number(string $name, string $label, int $max): string
+    protected function number(string $name, string $label, int $max, bool $required = false): string
     {
         $value = isset($_POST[$name]) ? (int) $_POST[$name] : 1;
         $value = max(1, $value);
-        return '<div class="field"><label for="' . esc_attr($name) . '">' . esc_html($label) . '</label><input type="number" min="1" max="' . esc_attr((string) max(1, $max)) . '" name="' . esc_attr($name) . '" id="' . esc_attr($name) . '" value="' . esc_attr((string) $value) . '" /></div>';
+        $req = $required ? ' required' : '';
+        return '<div class="field"><label for="' . esc_attr($name) . '">' . esc_html($label) . '</label><input type="number" min="1" max="' . esc_attr((string) max(1, $max)) . '" name="' . esc_attr($name) . '" id="' . esc_attr($name) . '" value="' . esc_attr((string) $value) . '"' . $req . ' /></div>';
     }
 
     /**

@@ -90,17 +90,25 @@ class Plugin
         // Admin menus and pages
         add_action('admin_menu', [$this->admin_menus, 'register_menus']);
         add_action('admin_enqueue_scripts', [$this->admin_menus, 'enqueue_assets']);
-        add_action('wp_ajax_event_hub_calendar_events', [$this->admin_menus, 'ajax_calendar_events']);
-        add_action('wp_ajax_event_hub_public_calendar', [$this->admin_menus, 'ajax_public_calendar_events']);
-        add_action('wp_ajax_nopriv_event_hub_public_calendar', [$this->admin_menus, 'ajax_public_calendar_events']);
-        add_action('wp_ajax_event_hub_search_linked_events', [$this->cpt_session, 'ajax_search_linked_events']);
+        if (!$this->is_ajax_disabled()) {
+            add_action('wp_ajax_event_hub_calendar_events', [$this->admin_menus, 'ajax_calendar_events']);
+            add_action('wp_ajax_event_hub_public_calendar', [$this->admin_menus, 'ajax_public_calendar_events']);
+            add_action('wp_ajax_nopriv_event_hub_public_calendar', [$this->admin_menus, 'ajax_public_calendar_events']);
+            add_action('wp_ajax_event_hub_search_linked_events', [$this->cpt_session, 'ajax_search_linked_events']);
+        }
         add_action('admin_post_event_hub_delete_logs', [$this->admin_menus, 'handle_delete_logs']);
         add_action('admin_post_event_hub_sync_linked_events', [$this->settings, 'handle_linked_sync_action']);
         add_action('save_post', [$this->settings, 'maybe_sync_from_linked_event'], 20, 3);
 
         // Settings page
         add_action('admin_init', [$this->settings, 'register_settings']);
+        add_action('init', static function (): void {
+            load_plugin_textdomain('event-hub', false, dirname(plugin_basename(EVENT_HUB_FILE)) . '/languages');
+        });
 
+        // REST endpoints
+        add_action('rest_api_init', [$this->admin_menus, 'register_rest_routes']);
+        add_action('rest_api_init', [$this->cpt_session, 'register_rest_routes']);
         // Fallback runner voor herinneringen/follow-ups als WP-Cron niet draait.
         add_action('init', [$this, 'maybe_run_due_email_events'], 1);
         add_action('init', [$this, 'maybe_handle_event_hub_cron_request'], 0);
@@ -131,6 +139,11 @@ class Plugin
                 $integration->init();
             }
         }
+    }
+
+    private function is_ajax_disabled(): bool
+    {
+        return defined('EVENT_HUB_DISABLE_AJAX') && EVENT_HUB_DISABLE_AJAX;
     }
 
     /**

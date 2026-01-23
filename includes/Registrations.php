@@ -1011,6 +1011,8 @@ class Registrations
             $capacity = isset($occ['capacity']) ? (int) $occ['capacity'] : 0;
             $booking_open = isset($occ['booking_open']) ? sanitize_text_field((string) $occ['booking_open']) : '';
             $booking_close = isset($occ['booking_close']) ? sanitize_text_field((string) $occ['booking_close']) : '';
+            $location_name = isset($occ['location_name']) ? sanitize_text_field((string) $occ['location_name']) : '';
+            $location_address = isset($occ['location_address']) ? sanitize_text_field((string) $occ['location_address']) : '';
             $out[] = [
                 'id' => $id,
                 'date_start' => $start,
@@ -1018,6 +1020,8 @@ class Registrations
                 'capacity' => $capacity,
                 'booking_open' => $booking_open,
                 'booking_close' => $booking_close,
+                'location_name' => $location_name,
+                'location_address' => $location_address,
             ];
         }
         usort($out, static function (array $a, array $b): int {
@@ -1068,6 +1072,8 @@ class Registrations
         $time_start = $date_start ? date_i18n(get_option('time_format'), strtotime($date_start)) : '';
         $time_end = $date_end ? date_i18n(get_option('time_format'), strtotime($date_end)) : '';
         $time_range = $time_start && $time_end ? $time_start . ' - ' . $time_end : $time_start;
+        $location_name = $occurrence['location_name'] ?? '';
+        $location_address = $occurrence['location_address'] ?? '';
         $state = $this->get_capacity_state($session_id, (int) ($occurrence['id'] ?? 0));
         $availability_label = $state['capacity'] > 0
             ? sprintf(_n('%d plaats beschikbaar', '%d plaatsen beschikbaar', $state['available'], 'event-hub'), $state['available'])
@@ -1084,6 +1090,8 @@ class Registrations
             'time_range' => $time_range,
             'booking_open' => $occurrence['booking_open'] ?? '',
             'booking_close' => $occurrence['booking_close'] ?? '',
+            'location_name' => $location_name,
+            'location_address' => $location_address,
             'state' => $state,
             'availability_label' => $availability_label,
             'waitlist_label' => $waitlist_label,

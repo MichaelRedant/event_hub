@@ -279,12 +279,83 @@
     border-color: #c3d7ff;
     color: #1d4ed8;
 }
+.eh-chip.eh-chip-full {
+    background: #fff1f2;
+    border-color: #fecdd3;
+    color: #b91c1c;
+}
+.eh-chip-title {
+    font-weight: 600;
+}
 
 .eh-chip .count {
     background: rgba(0,0,0,0.08);
     padding: 2px 6px;
     border-radius: 999px;
     font-size: 11px;
+}
+.eh-cal-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+}
+.eh-cal-modal__backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.35);
+}
+.eh-cal-modal__card {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #fff;
+    border-radius: 12px;
+    padding: 18px;
+    width: min(420px, 90vw);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+}
+.eh-cal-modal__close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    border: none;
+    background: transparent;
+    font-size: 18px;
+    cursor: pointer;
+}
+.eh-cal-modal__body h3 {
+    margin: 0 0 6px 0;
+}
+.eh-cal-meta {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.eh-cal-when {
+    color: #475569;
+    margin-bottom: 10px;
+}
+.eh-cal-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0,1fr));
+    gap: 6px 12px;
+    margin-bottom: 12px;
+}
+.eh-cal-stat {
+    display: flex;
+    justify-content: space-between;
+    background: #f8fafc;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-weight: 600;
+}
+.eh-cal-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .eh-badge-pill {

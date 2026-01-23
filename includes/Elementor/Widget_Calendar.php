@@ -74,7 +74,7 @@ class Widget_Calendar extends Widget_Base
             true
         );
         wp_localize_script('event-hub-frontend-calendar', 'EventHubPublicCalendar', [
-            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'restUrl' => rest_url('event-hub/v1/calendar'),
             'view'    => $view,
             'labels'  => [
                 'error' => __('Er ging iets mis bij het laden van events.', 'event-hub'),

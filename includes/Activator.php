@@ -133,8 +133,15 @@ class Activator
             }
         }
 
-        $by_title = get_page_by_title($title, OBJECT, CPT_Email::CPT);
-        return (bool) $by_title;
+        $query = new \WP_Query([
+            'post_type' => CPT_Email::CPT,
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'title' => $title,
+            'fields' => 'ids',
+            'suppress_filters' => true,
+        ]);
+        return $query->have_posts();
     }
 
     private static function load_template_body(string $filename): string

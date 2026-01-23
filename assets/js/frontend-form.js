@@ -79,7 +79,8 @@
             .then(({ ok, body }) => {
                 if (ok && body && body.success) {
                     form.reset();
-                    showMessage(feedback, 'success', body.message || getMessage('success', 'Bedankt! Je inschrijving is ontvangen.'));
+                    const summary = buildSuccessSummary(body.session, body.message);
+                    showMessage(feedback, 'success', summary);
                     wrapper.classList.add('eh-form--success');
                     handleRegistrationSuccess(body.session || null);
                 } else {
@@ -148,6 +149,31 @@
             detail: session,
         }));
         updateEventListCards(session);
+    };
+
+    const buildSuccessSummary = (session, baseMessage) => {
+        const msg = baseMessage || getMessage('success', 'Bedankt! Je inschrijving is ontvangen.');
+        if (!session) {
+            return msg;
+        }
+        const parts = [msg];
+        if (session.date_label) {
+            let line = session.date_label;
+            if (session.time_range) {
+                line += ' | ' + session.time_range;
+            }
+            parts.push(line);
+        }
+        if (session.location_label || session.address) {
+            const locParts = [session.location_label, session.address && session.address !== session.location_label ? session.address : ''].filter(Boolean);
+            if (locParts.length) {
+                parts.push(locParts.join(' — '));
+            }
+        }
+        if (session.reference) {
+            parts.push(getMessage('reference', 'Referentie: ') + session.reference);
+        }
+        return parts.join(' • ');
     };
 
     const updateEventListCards = (session) => {
@@ -404,7 +430,17 @@
         fields.push(fieldInput('last_name', getMessage('last_name', 'Familienaam'), true));
         fields.push(fieldInput('email', getMessage('email', 'E-mail'), true, 'email'));
         if (Array.isArray(session.occurrences) && session.occurrences.length) {
-            fields.push(occurrenceSelect(session.occurrences, session.occurrence_id || 0));
+            const baseOption = session.date_label || session.time_range ? {
+                id: 0,
+                date_label: session.date_label || '',
+                time_range: session.time_range || '',
+                availability_label: session.availability_label || '',
+                waitlist_label: session.waitlist_label || '',
+                state: session.state || {},
+                location_name: session.location_label || '',
+                location_address: session.address || '',
+            } : null;
+            fields.unshift(occurrenceCards(session.occurrences, session.occurrence_id || 0, baseOption));
         }
         if (!hide.includes('phone')) {
             fields.push(fieldInput('phone', getMessage('phone', 'Telefoon'), false));
@@ -458,7 +494,10 @@
                         ${fields.join('')}
                     </div>
                     <input type="hidden" name="eh_captcha_token" id="eh_captcha_token" value="">
-                    <button type="submit" class="eh-btn">${submitLabel}</button>
+                    <div class="eh-cta-wrap">
+                        <span class="eh-cta-badge" data-eventhub-cta-badge>${session.availability_label || ''}</span>
+                        <button type="submit" class="eh-btn"><span class="eh-btn-label">${submitLabel}</span></button>
+                    </div>
                 </form>
             </div>
         `;
@@ -485,24 +524,49 @@
         return `<div class="field"><label>${label}${required ? ' *' : ''}</label><select name="${name}"${req}><option value="">${getMessage('choose', 'Maak een keuze')}</option>${opts}</select></div>`;
     };
 
-    const occurrenceSelect = (occurrences, selectedId) => {
-        const opts = (occurrences || []).map((occ) => {
-            const labelParts = [];
-            if (occ.date_label) {
-                labelParts.push(occ.date_label);
-            }
-            if (occ.time_range) {
-                labelParts.push(occ.time_range);
-            }
-            if (occ.availability_label) {
-                labelParts.push(occ.availability_label);
-            }
-            const label = labelParts.filter(Boolean).join(' | ');
-            const selected = Number(occ.id) === Number(selectedId) ? ' selected' : '';
-            const dataAttrs = ` data-date-label="${occ.date_label || ''}" data-time-range="${occ.time_range || ''}" data-availability="${occ.availability_label || ''}" data-waitlist="${occ.waitlist_label || ''}" data-full="${occ.state && occ.state.is_full ? '1' : '0'}"`;
-            return `<option value="${occ.id}"${selected}${dataAttrs}>${label || occ.id}</option>`;
+    const occurrenceCards = (occurrences, selectedId, baseOption) => {
+        const list = [];
+        if (baseOption) {
+            list.push({
+                ...baseOption,
+                label: baseOption.date_label || getMessage('main_occurrence', 'Hoofd event'),
+            });
+        }
+        occurrences.forEach((occ) => list.push(occ));
+        const items = (list || []).map((occ) => {
+            const id = Number(occ.id);
+            const isSelected = id === Number(selectedId);
+            const date = occ.date_label || '';
+            const time = occ.time_range || '';
+            const availability = occ.availability_label || '';
+            const waitlist = occ.waitlist_label || '';
+            const loc = occ.location_name || occ.location_address || '';
+            const dataAttrs = `
+                data-date-label="${occ.date_label || ''}"
+                data-time-range="${occ.time_range || ''}"
+                data-availability="${availability}"
+                data-waitlist="${waitlist}"
+                data-full="${occ.state && occ.state.is_full ? '1' : '0'}"
+                data-location="${occ.location_name || ''}"
+                data-location-address="${occ.location_address || ''}"
+            `;
+            const badge = availability ? `<span class="eh-occ-badge">${availability}</span>` : '';
+            return `
+            <label class="eh-occ-card">
+                <input type="radio" name="occurrence_id" value="${id}" ${isSelected ? 'checked' : ''} ${dataAttrs}>
+                <div class="eh-occ-card__body">
+                    <div class="eh-occ-card__header">
+                        <div class="eh-occ-card__date">${date || getMessage('choose', 'Maak een keuze')}</div>
+                        ${badge}
+                    </div>
+                    <div class="eh-occ-card__meta">
+                        ${time ? `<span>${time}</span>` : ''}
+                        ${loc ? `<span class="eh-occ-card__loc">${loc}</span>` : ''}
+                    </div>
+                </div>
+            </label>`;
         }).join('');
-        return `<div class="field full"><label>${getMessage('occurrence', 'Kies datum')} *</label><select name="occurrence_id" required><option value="">${getMessage('choose', 'Maak een keuze')}</option>${opts}</select></div>`;
+        return `<div class="field full eh-occ-wrapper"><span class="eh-occ-label">${getMessage('occurrence', 'Kies datum')} *</span><div class="eh-occ-list" role="radiogroup">${items}</div><div class="eh-occ-location" data-ehevent-location></div></div>`;
     };
 
     const checkboxInput = (name, label, checked = false) => {
@@ -518,38 +582,83 @@
         if (!root) {
             return;
         }
+        const radios = root.querySelectorAll('input[name="occurrence_id"]');
         const select = root.querySelector('select[name="occurrence_id"]');
-        if (!select) {
+        if (!radios.length && !select) {
             return;
         }
         const dateEl = root.querySelector('[data-eventhub-date]');
         const availabilityEl = root.querySelector('[data-eventhub-availability]');
         const waitlistEl = root.querySelector('[data-eventhub-waitlist]');
         const waitlistOptIn = root.querySelector('[data-eventhub-waitlist-optin]');
+        const locEl = root.querySelector('[data-ehevent-location]');
+        const ctaBadge = root.querySelector('[data-eventhub-cta-badge]');
+        const submitBtn = root.querySelector('button[type="submit"]');
+
+        const getSelection = () => {
+            if (radios.length) {
+                for (const r of radios) {
+                    if (r.checked) return r;
+                }
+                return radios[0] || null;
+            }
+            if (select) {
+                return select.selectedOptions && select.selectedOptions[0] ? select.selectedOptions[0] : null;
+            }
+            return null;
+        };
 
         const update = () => {
-            const opt = select.selectedOptions && select.selectedOptions[0] ? select.selectedOptions[0] : null;
-            if (!opt) {
-                return;
-            }
-            const dateLabel = opt.getAttribute('data-date-label') || '';
-            const timeRange = opt.getAttribute('data-time-range') || '';
+            const opt = getSelection();
+            if (!opt) return;
+            const get = (key) => opt.getAttribute(key) || '';
+            const dateLabel = get('data-date-label');
+            const timeRange = get('data-time-range');
+            const availability = get('data-availability');
+            const waitlist = get('data-waitlist');
+            const loc = get('data-location');
+            const addr = get('data-location-address');
+            const isFull = get('data-full') === '1';
+
             if (dateEl) {
                 dateEl.textContent = dateLabel + (timeRange ? ' | ' + timeRange : '');
             }
             if (availabilityEl) {
-                availabilityEl.textContent = opt.getAttribute('data-availability') || '';
+                availabilityEl.textContent = availability;
             }
             if (waitlistEl) {
-                waitlistEl.textContent = opt.getAttribute('data-waitlist') || '';
+                waitlistEl.textContent = waitlist;
             }
             if (waitlistOptIn) {
-                const isFull = opt.getAttribute('data-full') === '1';
                 waitlistOptIn.style.display = isFull ? '' : 'none';
+                const cb = waitlistOptIn.querySelector('input[type="checkbox"]');
+                if (cb) {
+                    cb.checked = isFull;
+                }
+            }
+            if (locEl) {
+                const parts = [loc, addr && addr !== loc ? addr : ''].filter(Boolean);
+                locEl.innerHTML = parts.length ? '<strong>' + getMessage('location', 'Locatie') + ':</strong> ' + parts.join(' — ') : '';
+            }
+            if (ctaBadge) {
+                ctaBadge.textContent = availability || '';
+            }
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('is-disabled');
+                if (isFull && (!waitlistOptIn || waitlistOptIn.style.display === 'none')) {
+                    submitBtn.disabled = true;
+                    submitBtn.classList.add('is-disabled');
+                }
             }
         };
 
-        select.addEventListener('change', update);
+        if (radios.length) {
+            radios.forEach((r) => r.addEventListener('change', update));
+        }
+        if (select) {
+            select.addEventListener('change', update);
+        }
         update();
     };
 

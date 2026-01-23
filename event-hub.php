@@ -16,6 +16,7 @@ define('EVENT_HUB_VERSION', '1.0.0');
 define('EVENT_HUB_FILE', __FILE__);
 define('EVENT_HUB_PATH', plugin_dir_path(__FILE__));
 define('EVENT_HUB_URL', plugin_dir_url(__FILE__));
+defined('EVENT_HUB_DISABLE_AJAX') || define('EVENT_HUB_DISABLE_AJAX', true);
 
 // Simple PSR-4 style autoloader for the plugin namespace
 spl_autoload_register(static function ($class) {

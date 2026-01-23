@@ -2,7 +2,8 @@
 
 namespace EventHub;
 
-
+use WP_REST_Request;
+use WP_REST_Response;
 
 defined('ABSPATH') || exit;
 
@@ -34,6 +35,214 @@ class Admin_Menus
 
         $this->logger        = $logger;
 
+    }
+
+    public function register_rest_routes(): void
+    {
+        register_rest_route('event-hub/v1', '/admin/calendar', [
+            'methods'             => \WP_REST_Server::READABLE,
+            'callback'            => [$this, 'rest_admin_calendar'],
+            'permission_callback' => static function (): bool {
+                return current_user_can('edit_posts');
+            },
+            'args'                => [
+                'start' => ['type' => 'string', 'required' => false],
+                'end'   => ['type' => 'string', 'required' => false],
+            ],
+        ]);
+
+        register_rest_route('event-hub/v1', '/calendar', [
+            'methods'             => \WP_REST_Server::READABLE,
+            'callback'            => [$this, 'rest_public_calendar'],
+            'permission_callback' => '__return_true',
+            'args'                => [
+                'start' => ['type' => 'string', 'required' => false],
+                'end'   => ['type' => 'string', 'required' => false],
+            ],
+        ]);
+    }
+
+    public function rest_admin_calendar(WP_REST_Request $request): WP_REST_Response
+    {
+        $start = $request->get_param('start');
+        $end   = $request->get_param('end');
+        $start_ts = $start ? strtotime((string) $start) : null;
+        $end_ts   = $end ? strtotime((string) $end) : null;
+        $events = $this->build_calendar_events($start_ts, $end_ts, true);
+        return rest_ensure_response($events);
+    }
+
+    public function rest_public_calendar(WP_REST_Request $request): WP_REST_Response
+    {
+        $range_days = 120;
+        $now = time();
+        $start = $request->get_param('start');
+        $end   = $request->get_param('end');
+        $start_ts = $start ? strtotime((string) $start) : strtotime('-1 month', $now);
+        $end_ts   = $end ? strtotime((string) $end) : strtotime('+' . $range_days . ' days', $now);
+        if (($end_ts - $start_ts) > ($range_days * DAY_IN_SECONDS)) {
+            $end_ts = $start_ts + ($range_days * DAY_IN_SECONDS);
+        }
+        $events = $this->build_calendar_events($start_ts, $end_ts, false);
+        return rest_ensure_response($events);
+    }
+
+    /**
+     * Bouw kalender events payload op basis van start/einde filter.
+     *
+     * @param int|null $start_ts
+     * @param int|null $end_ts
+     * @param bool     $admin_payload Voeg extra props toe (status/capacity/links).
+     * @return array<int,array<string,mixed>>
+     */
+    private function build_calendar_events(?int $start_ts, ?int $end_ts, bool $admin_payload = false): array
+    {
+        $args = [
+            'post_type'      => Settings::get_cpt_slug(),
+            'post_status'    => 'publish',
+            'posts_per_page' => -1,
+        ];
+
+        $posts = get_posts($args);
+        $events = [];
+        foreach ($posts as $post) {
+            $color = sanitize_hex_color((string) get_post_meta($post->ID, '_eh_color', true)) ?: '#2271b1';
+            $status_meta = get_post_meta($post->ID, '_eh_status', true) ?: 'open';
+            $location = get_post_meta($post->ID, '_eh_location', true);
+            $is_online = (bool) get_post_meta($post->ID, '_eh_is_online', true);
+            $term_list = wp_get_post_terms($post->ID, Settings::get_tax_slug(), ['fields' => 'names']);
+
+            $occurrences = $this->registrations->get_occurrences($post->ID);
+            if ($occurrences) {
+                foreach ($occurrences as $occ) {
+                    $occ_id = (int) ($occ['id'] ?? 0);
+                    if ($occ_id <= 0) {
+                        continue;
+                    }
+                    $date_start = $occ['date_start'] ?? '';
+                    if (!$date_start) {
+                        continue;
+                    }
+                    $occ_start_ts = strtotime($date_start);
+                    if ($occ_start_ts && $start_ts && $occ_start_ts < $start_ts) {
+                        continue;
+                    }
+                    if ($occ_start_ts && $end_ts && $occ_start_ts > $end_ts) {
+                        continue;
+                    }
+                    $date_end = $occ['date_end'] ?? '';
+
+                    $state = $this->registrations->get_capacity_state((int) $post->ID, $occ_id);
+                    $status = $status_meta;
+                    if ($admin_payload && !in_array($status, ['cancelled', 'closed'], true) && $state['is_full']) {
+                        $status = 'full';
+                    }
+                    $capacity = $state['capacity'];
+                    $booked = $state['booked'];
+                    $available = ($capacity > 0) ? max(0, $capacity - $booked) : null;
+                    $occupancy = ($capacity > 0) ? min(100, (int) round(($booked / max(1, $capacity)) * 100)) : null;
+
+                    $event = [
+                        'id' => $post->ID . '-' . $occ_id,
+                        'title' => $post->post_title,
+                        'start' => date('c', $occ_start_ts),
+                        'end' => $date_end ? date('c', strtotime($date_end)) : null,
+                        'url' => $admin_payload
+                            ? add_query_arg(
+                                [
+                                    'page' => 'event-hub-event',
+                                    'event_id' => $post->ID,
+                                    'occurrence_id' => $occ_id,
+                                ],
+                                admin_url('admin.php')
+                            )
+                            : add_query_arg('eh_occurrence', $occ_id, get_permalink($post->ID)),
+                        'backgroundColor' => $color,
+                        'borderColor' => $color,
+                    ];
+
+                    if ($admin_payload) {
+                        $event['classNames'] = ['eh-status-' . sanitize_html_class($status)];
+                        $event['extendedProps'] = [
+                            'status' => $status,
+                            'event_id' => (int) $post->ID,
+                            'occurrence_id' => $occ_id,
+                            'location' => $location,
+                            'is_online' => $is_online,
+                            'capacity' => $capacity,
+                            'booked' => $booked,
+                            'available' => $available,
+                            'occupancy' => $occupancy,
+                            'terms' => $term_list,
+                        ];
+                    }
+
+                    $events[] = $event;
+                }
+                continue;
+            }
+
+            $date_start = get_post_meta($post->ID, '_eh_date_start', true);
+            if (!$date_start) {
+                continue;
+            }
+            $post_start_ts = strtotime($date_start);
+            if ($post_start_ts && $start_ts && $post_start_ts < $start_ts) {
+                continue;
+            }
+            if ($post_start_ts && $end_ts && $post_start_ts > $end_ts) {
+                continue;
+            }
+            $date_end = get_post_meta($post->ID, '_eh_date_end', true);
+
+            $state = $this->registrations->get_capacity_state((int) $post->ID);
+            $status = $status_meta;
+            if ($admin_payload && !in_array($status, ['cancelled', 'closed'], true) && $state['is_full']) {
+                $status = 'full';
+            }
+            $capacity = $state['capacity'];
+            $booked = $state['booked'];
+            $available = ($capacity > 0) ? max(0, $capacity - $booked) : null;
+            $occupancy = ($capacity > 0) ? min(100, (int) round(($booked / max(1, $capacity)) * 100)) : null;
+
+            $event = [
+                'id' => $post->ID,
+                'title' => $post->post_title,
+                'start' => date('c', $post_start_ts),
+                'end' => $date_end ? date('c', strtotime($date_end)) : null,
+                'url' => $admin_payload
+                    ? add_query_arg(
+                        [
+                            'page' => 'event-hub-event',
+                            'event_id' => $post->ID,
+                        ],
+                        admin_url('admin.php')
+                    )
+                    : get_permalink($post->ID),
+                'backgroundColor' => $color,
+                'borderColor' => $color,
+            ];
+
+            if ($admin_payload) {
+                $event['classNames'] = ['eh-status-' . sanitize_html_class($status)];
+                $event['extendedProps'] = [
+                    'status' => $status,
+                    'event_id' => (int) $post->ID,
+                    'occurrence_id' => 0,
+                    'location' => $location,
+                    'is_online' => $is_online,
+                    'capacity' => $capacity,
+                    'booked' => $booked,
+                    'available' => $available,
+                    'occupancy' => $occupancy,
+                    'terms' => $term_list,
+                ];
+            }
+
+            $events[] = $event;
+        }
+
+        return $events;
     }
 
 
@@ -317,30 +526,22 @@ class Admin_Menus
 
     public function enqueue_assets(string $hook): void
     {
+        $ajax_disabled = defined('EVENT_HUB_DISABLE_AJAX') && EVENT_HUB_DISABLE_AJAX;
 
         $page = isset($_GET['page']) ? sanitize_key((string) $_GET['page']) : '';
 
         $plugin_pages = [
-
             'event-hub',
-
             'event-hub-registrations',
-
             'event-hub-settings',
-
             'event-hub-general',
-
             'event-hub-calendar',
-
             'event-hub-event',
-
             'event-hub-stats',
-
             'event-hub-logs',
-
         ];
 
-
+        $toast = null;
 
         if (in_array($page, $plugin_pages, true)) {
 
@@ -401,6 +602,9 @@ class Admin_Menus
             wp_localize_script('event-hub-admin-ui', 'EventHubAdminUI', [
 
                 'toast' => $toast,
+                'ajaxEnabled' => !$ajax_disabled,
+                'restNonce' => wp_create_nonce('wp_rest'),
+                'searchRestUrl' => rest_url('event-hub/v1/admin/search-linked'),
 
             ]);
 
@@ -422,6 +626,12 @@ class Admin_Menus
                 EVENT_HUB_VERSION,
                 true
             );
+            wp_localize_script('event-hub-admin-ui', 'EventHubAdminUI', [
+                'toast' => $toast,
+                'ajaxEnabled' => !$ajax_disabled,
+                'restNonce' => wp_create_nonce('wp_rest'),
+                'searchRestUrl' => rest_url('event-hub/v1/admin/search-linked'),
+            ]);
         }
 
 
@@ -500,9 +710,9 @@ class Admin_Menus
 
             wp_localize_script('event-hub-admin-calendar', 'eventHubCalendar', [
 
-                'ajaxUrl' => admin_url('admin-ajax.php'),
+                'restUrl' => rest_url('event-hub/v1/admin/calendar'),
 
-                'nonce'   => wp_create_nonce('event_hub_calendar'),
+                'nonce'   => wp_create_nonce('wp_rest'),
 
                 'labels'  => [
 
@@ -515,6 +725,9 @@ class Admin_Menus
                 ],
 
                 'newEventUrl' => admin_url('post-new.php?post_type=' . Settings::get_cpt_slug()),
+                'dashboardBase' => admin_url('admin.php?page=event-hub-event'),
+                'registrationsBase' => admin_url('admin.php?page=event-hub-registrations'),
+                'newRegistrationBase' => admin_url('admin.php?page=event-hub-registrations&action=new'),
 
             ]);
 
@@ -697,7 +910,6 @@ class Admin_Menus
         if (!current_user_can('edit_posts')) {
             wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
         }
-
         echo '<div class="wrap eh-admin">';
         echo '<h1>' . esc_html__('Eventkalender', 'event-hub') . '</h1>';
         echo '<p>' . esc_html__('Bekijk al je events in een oogopslag. Klik op een event om het in een nieuw tabblad te openen.', 'event-hub') . '</p>';
@@ -2117,19 +2329,12 @@ private function collect_stats(int $start_ts, int $end_ts): array
     {
 
         return [
-
             'registered' => __('Geregistreerd', 'event-hub'),
-
             'confirmed'  => __('Bevestigd', 'event-hub'),
-
             'cancelled'  => __('Geannuleerd', 'event-hub'),
-
             'attended'   => __('Aanwezig', 'event-hub'),
-
             'no_show'    => __('Niet opgedaagd', 'event-hub'),
-
             'waitlist'   => __('Wachtlijst', 'event-hub'),
-
         ];
 
     }
@@ -2755,6 +2960,45 @@ private function collect_stats(int $start_ts, int $end_ts): array
         $active_regs = array_values(array_filter($registrations, static fn($row) => ($row['status'] ?? '') !== 'waitlist'));
 
         $state = $this->registrations->get_capacity_state($event_id, $occurrence_id);
+        $status_counts = [];
+        foreach ($registrations as $row) {
+            $st = $row['status'] ?? '';
+            if ($st === '') {
+                continue;
+            }
+            if (!isset($status_counts[$st])) {
+                $status_counts[$st] = 0;
+            }
+            $status_counts[$st]++;
+        }
+
+        $occurrence_stats = [];
+        $booked_total = 0;
+        $waitlist_total = 0;
+        if ($occurrences) {
+            foreach ($occurrences as $occ) {
+                $occ_id = (int) ($occ['id'] ?? 0);
+                if ($occ_id <= 0) {
+                    continue;
+                }
+                $state_occ = $this->registrations->get_capacity_state($event_id, $occ_id);
+                $booked_total += $state_occ['booked'];
+                $waitlist_total += $state_occ['waitlist'];
+                $label = $occ['date_start'] ?? '';
+                $label = $label ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($label)) : ('#' . $occ_id);
+                $occurrence_stats[] = [
+                    'id' => $occ_id,
+                    'label' => $label,
+                    'booked' => $state_occ['booked'],
+                    'capacity' => $state_occ['capacity'],
+                    'waitlist' => $state_occ['waitlist'],
+                    'is_full' => !empty($state_occ['is_full']),
+                ];
+            }
+        } else {
+            $booked_total = $state['booked'];
+            $waitlist_total = $state['waitlist'];
+        }
 
         $status = get_post_meta($event_id, '_eh_status', true) ?: 'open';
 
@@ -2854,7 +3098,15 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         echo '<div><h1>' . esc_html__('Eventdashboard', 'event-hub') . '</h1>';
 
-        echo '<h2>' . esc_html(get_the_title($event_id)) . '</h2></div>';
+        echo '<h2>' . esc_html(get_the_title($event_id)) . '</h2>';
+        echo '<div class="eh-dashboard-meta">';
+        echo '<span class="eh-badge-pill status-' . esc_attr($status) . '">' . esc_html(ucfirst($status)) . '</span>';
+        echo '<span class="eh-badge-pill status-open">' . esc_html(sprintf(_n('%d inschrijving', '%d inschrijvingen', $booked_total, 'event-hub'), $booked_total)) . '</span>';
+        if ($waitlist_total > 0) {
+            echo '<span class="eh-badge-pill status-waitlist">' . esc_html(sprintf(_n('%d wachtlijst', '%d wachtlijst', $waitlist_total, 'event-hub'), $waitlist_total)) . '</span>';
+        }
+        echo '</div>';
+        echo '</div>';
 
         echo '<div class="eh-dashboard-actions">';
 
@@ -2899,6 +3151,27 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         echo '</div>'; // header
 
+        if ($occurrence_stats) {
+            echo '<div class="eh-occurrence-chips" style="margin:12px 0;display:flex;gap:8px;flex-wrap:wrap;">';
+            $all_url = add_query_arg(['event_id' => $event_id, 'page' => 'event-hub-event', 'occurrence_id' => ''], admin_url('admin.php'));
+            echo '<a class="eh-chip ' . ($occurrence_id === 0 ? 'active' : '') . '" href="' . esc_url($all_url) . '">' . esc_html__('Alle datums', 'event-hub') . '</a>';
+            foreach ($occurrence_stats as $occ_stat) {
+                $is_active = $occurrence_id === (int) $occ_stat['id'];
+                $chip_url = add_query_arg(['event_id' => $event_id, 'page' => 'event-hub-event', 'occurrence_id' => (int) $occ_stat['id']], admin_url('admin.php'));
+                $label = $occ_stat['label'];
+                $badge = $occ_stat['capacity'] > 0 ? sprintf('%d/%d', $occ_stat['booked'], $occ_stat['capacity']) : (string) $occ_stat['booked'];
+                if ($occ_stat['waitlist'] > 0) {
+                    $badge .= ' +' . $occ_stat['waitlist'];
+                }
+                $class = 'eh-chip' . ($is_active ? ' active' : '');
+                if (!empty($occ_stat['is_full'])) {
+                    $class .= ' eh-chip-full';
+                }
+                echo '<a class="' . esc_attr($class) . '" href="' . esc_url($chip_url) . '"><span class="eh-chip-title">' . esc_html($label) . '</span><span class="count">' . esc_html($badge) . '</span></a>';
+            }
+            echo '</div>';
+        }
+
 
 
         echo '<div class="eh-grid stats">';
@@ -2913,7 +3186,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
             ['label' => __('Locatie', 'event-hub'), 'value' => $is_online ? __('Online', 'event-hub') : ($location ?: '—')],
 
-            ['label' => __('Inschrijvingen', 'event-hub'), 'value' => (string) $state['booked']],
+            ['label' => __('Inschrijvingen', 'event-hub'), 'value' => (string) $booked_total],
 
             ['label' => __('Beschikbaar', 'event-hub'), 'value' => $state['capacity'] > 0 ? sprintf('%d / %d', $state['available'], $state['capacity']) : __('Onbeperkt', 'event-hub')],
 
@@ -2921,7 +3194,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
             ['label' => __('Boekingseinde', 'event-hub'), 'value' => $booking_close ? date_i18n(get_option('date_format'), strtotime($booking_close)) : '—'],
 
-            ['label' => __('Wachtlijst', 'event-hub'), 'value' => (string) count($waitlist_regs)],
+            ['label' => __('Wachtlijst', 'event-hub'), 'value' => (string) $waitlist_total],
 
         ];
 
@@ -2936,6 +3209,14 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
 
         // Search/filter bar for participants and waitlist
+
+        if ($status_counts) {
+            echo '<div class="eh-status-summary" style="margin:8px 0 4px;display:flex;gap:8px;flex-wrap:wrap;">';
+            foreach ($status_counts as $st => $count) {
+                echo '<span class="eh-badge-pill status-' . esc_attr($st) . '">' . esc_html(ucfirst($st)) . ': ' . esc_html((string) $count) . '</span>';
+            }
+            echo '</div>';
+        }
 
         $search_query = $search ?: '';
 
@@ -3563,6 +3844,11 @@ private function collect_stats(int $start_ts, int $end_ts): array
             }
         }
         return implode(', ', $names);
+    }
+
+    private function ajax_disabled(): bool
+    {
+        return defined('EVENT_HUB_DISABLE_AJAX') && EVENT_HUB_DISABLE_AJAX;
     }
 
 }

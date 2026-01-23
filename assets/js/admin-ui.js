@@ -167,7 +167,9 @@
         if (!cptInput || !searchInput || !resultsEl || !selectedEl || !idInput || !nonceEl) {
             return;
         }
-        if (typeof ajaxurl === 'undefined') {
+        const restUrl = window.EventHubAdminUI && window.EventHubAdminUI.searchRestUrl ? window.EventHubAdminUI.searchRestUrl : null;
+        const restNonce = window.EventHubAdminUI && window.EventHubAdminUI.restNonce ? window.EventHubAdminUI.restNonce : null;
+        if (!restUrl || !restNonce) {
             return;
         }
 
@@ -324,31 +326,33 @@
             if (useRecent || useAll) {
                 term = '';
             }
-            const payload = new URLSearchParams();
-            payload.append('action', 'event_hub_search_linked_events');
-            payload.append('nonce', nonceEl.value || '');
-            payload.append('cpt', cpt);
-            payload.append('term', term);
-            if (useRecent) {
-                payload.append('recent', '1');
-            }
-            if (useAll) {
-                payload.append('all', '1');
-            }
-            fetch(ajaxurl, {
+            const body = {
+                cpt,
+                term,
+                recent: useRecent,
+                all: useAll
+            };
+            fetch(restUrl, {
                 method: 'POST',
                 credentials: 'same-origin',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-                body: payload.toString()
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-WP-Nonce': restNonce
+                },
+                body: JSON.stringify(body)
             })
-                .then((res) => res.json())
+                .then((res) => {
+                    if (!res.ok) {
+                        throw new Error('Request failed');
+                    }
+                    return res.json();
+                })
                 .then((data) => {
-                    if (!data || !data.success) {
-                        const msg = data && data.data && data.data.message ? data.data.message : 'Zoeken mislukt.';
-                        renderMessage(msg);
+                    if (!data) {
+                        renderMessage('Geen resultaat.');
                         return;
                     }
-                    renderResults(data.data || [], term, useRecent, useAll);
+                    renderResults(data, term, useRecent, useAll);
                 })
                 .catch(() => renderMessage('Zoeken mislukt.'));
         }
