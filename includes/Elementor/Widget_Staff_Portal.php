@@ -85,6 +85,141 @@ class Widget_Staff_Portal extends Widget_Base
             'default' => ['size' => 10, 'unit' => 'px'],
         ]);
 
+        $this->add_responsive_control('max_width', [
+            'label' => __('Maximale breedte', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SLIDER,
+            'size_units' => ['%', 'px'],
+            'range' => [
+                '%' => ['min' => 10, 'max' => 100],
+                'px' => ['min' => 600, 'max' => 2000],
+            ],
+            'default' => ['size' => 100, 'unit' => '%'],
+        ]);
+
+        $this->add_responsive_control('stack_gap', [
+            'label' => __('Verticale afstand blokken', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SLIDER,
+            'size_units' => ['px'],
+            'range' => ['px' => ['min' => 0, 'max' => 48]],
+            'default' => ['size' => 12, 'unit' => 'px'],
+        ]);
+
+        $this->end_controls_section();
+
+        $this->start_controls_section('section_order', [
+            'label' => __('Volgorde onderdelen', 'event-hub'),
+        ]);
+
+        $order_options = [
+            1 => '1', 2 => '2', 3 => '3', 4 => '4', 5 => '5', 6 => '6',
+        ];
+
+        $this->add_control('order_controls', [
+            'label' => __('Event & datum selectie', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SELECT,
+            'options' => $order_options,
+            'default' => 1,
+        ]);
+        $this->add_control('order_quickbar', [
+            'label' => __('Zoek / filters / stats', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SELECT,
+            'options' => $order_options,
+            'default' => 2,
+        ]);
+        $this->add_control('order_fields', [
+            'label' => __('Kolomkeuze', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SELECT,
+            'options' => $order_options,
+            'default' => 3,
+        ]);
+        $this->add_control('order_views', [
+            'label' => __('Views (opslaan/laden)', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SELECT,
+            'options' => $order_options,
+            'default' => 4,
+        ]);
+        $this->add_control('order_actions', [
+            'label' => __('Acties (exports)', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SELECT,
+            'options' => $order_options,
+            'default' => 5,
+        ]);
+        $this->add_control('order_table', [
+            'label' => __('Resultaat tabel/cards', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::SELECT,
+            'options' => $order_options,
+            'default' => 6,
+        ]);
+
+        $this->end_controls_section();
+
+        $this->start_controls_section('section_style', [
+            'label' => __('Stijl', 'event-hub'),
+            'tab' => \Elementor\Controls_Manager::TAB_STYLE,
+        ]);
+
+        $this->add_control('bg_color', [
+            'label' => __('Achtergrond', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::COLOR,
+            'default' => '#f8fbff',
+            'selectors' => [
+                '{{WRAPPER}} .eh-staff-portal' => 'background: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('text_color', [
+            'label' => __('Tekstkleur', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::COLOR,
+            'selectors' => [
+                '{{WRAPPER}} .eh-staff-portal' => 'color: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('surface_color', [
+            'label' => __('Panel achtergrond', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::COLOR,
+            'default' => '#ffffff',
+            'selectors' => [
+                '{{WRAPPER}} .eh-staff-portal' => '--eh-sp-surface: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('border_color', [
+            'label' => __('Randkleur', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::COLOR,
+            'default' => '#dfe6f0',
+            'selectors' => [
+                '{{WRAPPER}} .eh-staff-portal' => '--eh-sp-border: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('chip_active', [
+            'label' => __('Actieve status chip', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::COLOR,
+            'default' => '#0f6289',
+            'selectors' => [
+                '{{WRAPPER}} .eh-staff-portal' => '--eh-sp-chip-active: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('chip_inactive', [
+            'label' => __('Inactieve status chip', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::COLOR,
+            'default' => '#f8fafc',
+            'selectors' => [
+                '{{WRAPPER}} .eh-staff-portal' => '--eh-sp-chip-inactive: {{VALUE}};',
+            ],
+        ]);
+
+        $this->add_control('table_header_bg', [
+            'label' => __('Tabel header', 'event-hub'),
+            'type' => \Elementor\Controls_Manager::COLOR,
+            'default' => '#f2f5fa',
+            'selectors' => [
+                '{{WRAPPER}} .eh-staff-portal' => '--eh-sp-th: {{VALUE}};',
+            ],
+        ]);
+
         $this->end_controls_section();
     }
 
@@ -177,12 +312,42 @@ class Widget_Staff_Portal extends Widget_Base
         $pad = isset($settings['padding']['size']) ? (float) $settings['padding']['size'] . ($settings['padding']['unit'] ?? 'px') : '16px';
         $radius = isset($settings['radius']['size']) ? (float) $settings['radius']['size'] . ($settings['radius']['unit'] ?? 'px') : '12px';
         $gap = isset($settings['gap']['size']) ? (float) $settings['gap']['size'] . ($settings['gap']['unit'] ?? 'px') : '10px';
+        $max_width = isset($settings['max_width']['size']) ? (float) $settings['max_width']['size'] . ($settings['max_width']['unit'] ?? '%') : '100%';
+        $stack_gap = isset($settings['stack_gap']['size']) ? (float) $settings['stack_gap']['size'] . ($settings['stack_gap']['unit'] ?? 'px') : '12px';
+        $order_controls = !empty($settings['order_controls']) ? (int) $settings['order_controls'] : 1;
+        $order_quickbar = !empty($settings['order_quickbar']) ? (int) $settings['order_quickbar'] : 2;
+        $order_fields = !empty($settings['order_fields']) ? (int) $settings['order_fields'] : 3;
+        $order_views = !empty($settings['order_views']) ? (int) $settings['order_views'] : 4;
+        $order_actions = !empty($settings['order_actions']) ? (int) $settings['order_actions'] : 5;
+        $order_table = !empty($settings['order_table']) ? (int) $settings['order_table'] : 6;
+        $bg = !empty($settings['bg_color']) ? $settings['bg_color'] : '';
+        $text = !empty($settings['text_color']) ? $settings['text_color'] : '';
+        $surface = !empty($settings['surface_color']) ? $settings['surface_color'] : '';
+        $border = !empty($settings['border_color']) ? $settings['border_color'] : '';
+        $chip_active = !empty($settings['chip_active']) ? $settings['chip_active'] : '';
+        $chip_inactive = !empty($settings['chip_inactive']) ? $settings['chip_inactive'] : '';
+        $th_bg = !empty($settings['table_header_bg']) ? $settings['table_header_bg'] : '';
         $style_vars = sprintf(
-            '--eh-sp-accent:%s;--eh-sp-pad:%s;--eh-sp-radius:%s;--eh-sp-gap:%s;',
+            '--eh-sp-accent:%s;--eh-sp-pad:%s;--eh-sp-radius:%s;--eh-sp-gap:%s;--eh-sp-max:%s;--eh-sp-stack-gap:%s;--eh-sp-order-controls:%d;--eh-sp-order-quickbar:%d;--eh-sp-order-fields:%d;--eh-sp-order-views:%d;--eh-sp-order-actions:%d;--eh-sp-order-table:%d;%s%s%s%s%s%s%s',
             esc_attr($accent),
             esc_attr($pad),
             esc_attr($radius),
-            esc_attr($gap)
+            esc_attr($gap),
+            esc_attr($max_width),
+            esc_attr($stack_gap),
+            $order_controls,
+            $order_quickbar,
+            $order_fields,
+            $order_views,
+            $order_actions,
+            $order_table,
+            $bg ? '--eh-sp-bg:' . esc_attr($bg) . ';' : '',
+            $text ? '--eh-sp-text:' . esc_attr($text) . ';' : '',
+            $surface ? '--eh-sp-surface:' . esc_attr($surface) . ';' : '',
+            $border ? '--eh-sp-border:' . esc_attr($border) . ';' : '',
+            $chip_active ? '--eh-sp-chip-active:' . esc_attr($chip_active) . ';' : '',
+            $chip_inactive ? '--eh-sp-chip-inactive:' . esc_attr($chip_inactive) . ';' : '',
+            $th_bg ? '--eh-sp-th:' . esc_attr($th_bg) . ';' : ''
         );
         ?>
         <div class="eh-staff-portal" data-layout="<?php echo esc_attr($layout_mode); ?>" style="<?php echo esc_attr($style_vars); ?>" <?php echo $data_attrs; ?>>
@@ -200,9 +365,33 @@ class Widget_Staff_Portal extends Widget_Base
                         <option value=""><?php esc_html_e('Alle datums', 'event-hub'); ?></option>
                     </select>
                 </label>
-                <label><?php esc_html_e('Zoek', 'event-hub'); ?>
-                    <input type="text" class="eh-sp-search" placeholder="<?php esc_attr_e('Zoek in alle velden…', 'event-hub'); ?>" />
-                </label>
+            </div>
+            <div class="eh-sp-quickbar">
+                <div class="eh-sp-search">
+                    <input type="text" class="eh-sp-search-input" placeholder="<?php esc_attr_e('Zoek op naam, e-mail of andere velden…', 'event-hub'); ?>" />
+                    <div class="eh-sp-result-count" aria-live="polite"></div>
+                </div>
+                <div class="eh-sp-status-filters" role="group" aria-label="<?php esc_attr_e('Filter op status', 'event-hub'); ?>">
+                    <button type="button" class="is-active" data-status=""><?php esc_html_e('Alle statussen', 'event-hub'); ?></button>
+                    <button type="button" data-status="registered"><?php esc_html_e('Ingeschreven', 'event-hub'); ?></button>
+                    <button type="button" data-status="confirmed"><?php esc_html_e('Bevestigd', 'event-hub'); ?></button>
+                    <button type="button" data-status="waitlist"><?php esc_html_e('Wachtlijst', 'event-hub'); ?></button>
+                    <button type="button" data-status="cancelled"><?php esc_html_e('Geannuleerd', 'event-hub'); ?></button>
+                </div>
+                <div class="eh-sp-stats" aria-live="polite">
+                    <div class="eh-sp-stat">
+                        <span class="eh-sp-stat-label"><?php esc_html_e('Totaal', 'event-hub'); ?></span>
+                        <span class="eh-sp-stat-value" data-stat="total">0</span>
+                    </div>
+                    <div class="eh-sp-stat">
+                        <span class="eh-sp-stat-label"><?php esc_html_e('Wachtlijst', 'event-hub'); ?></span>
+                        <span class="eh-sp-stat-value" data-stat="waitlist">0</span>
+                    </div>
+                    <div class="eh-sp-stat">
+                        <span class="eh-sp-stat-label"><?php esc_html_e('Geannuleerd', 'event-hub'); ?></span>
+                        <span class="eh-sp-stat-value" data-stat="cancelled">0</span>
+                    </div>
+                </div>
             </div>
             <div class="eh-sp-fields">
                 <p><strong><?php esc_html_e('Velden voor export/overzicht', 'event-hub'); ?></strong></p>

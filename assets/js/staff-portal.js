@@ -24,7 +24,12 @@
     const viewDelete = root.querySelector('.eh-sp-view-delete');
     const viewName = root.querySelector('.eh-sp-view-name');
     const viewSave = root.querySelector('.eh-sp-view-save-btn');
-    const searchInput = root.querySelector('.eh-sp-search');
+    const searchInput = root.querySelector('.eh-sp-search-input');
+    const resultCountEl = root.querySelector('.eh-sp-result-count');
+    const statusFilters = root.querySelector('.eh-sp-status-filters');
+    const statTotal = root.querySelector('[data-stat="total"]');
+    const statWaitlist = root.querySelector('[data-stat="waitlist"]');
+    const statCancelled = root.querySelector('[data-stat="cancelled"]');
     const layoutMode = root.dataset.layout || 'table';
     const addCustomBtn = root.querySelector('.eh-sp-add-custom');
     const customNameInput = root.querySelector('.eh-sp-custom-name');
@@ -35,6 +40,7 @@
     let currentOccurrenceId = '';
     let savedViews = {};
     let filteredData = [];
+    let statusFilter = '';
 
     const occurrenceAllLabel = occurrenceSelect && occurrenceSelect.querySelector('option')
       ? occurrenceSelect.querySelector('option').textContent
@@ -268,6 +274,8 @@
         currentData = [];
         filteredData = [];
         render(getSelectedFields(), []);
+        updateResultCount(0, 0);
+        updateStats([]);
         return;
       }
       setStatus('Laden...', false);
@@ -290,13 +298,15 @@
           currentData = [];
           filteredData = [];
           render(fields, []);
+          updateResultCount(0, 0);
+          updateStats([]);
           return;
         }
         currentData = res.registrations || [];
         currentFields = res.fields || fields;
         filteredData = currentData;
         setStatus('', false);
-        applySearch();
+        applyFilters();
       }).catch(() => {
         setStatus('Laden mislukt.', true);
       });
@@ -319,7 +329,7 @@
 
     fieldWrap.addEventListener('change', () => {
       currentFields = getSelectedFields();
-      applySearch();
+      applyFilters();
     });
 
     fieldWrap.addEventListener('click', (e) => {
@@ -337,7 +347,7 @@
           if (next) parent.insertBefore(next, label);
         }
         currentFields = getSelectedFields();
-        applySearch();
+        applyFilters();
       }
     });
 
@@ -354,7 +364,7 @@
         addFieldOption(id, true, name);
         if (customNameInput) customNameInput.value = '';
         currentFields = getSelectedFields();
-        applySearch();
+        applyFilters();
       });
     }
 
@@ -406,7 +416,7 @@
         cb.checked = fields.includes(cb.value);
       });
       currentFields = fields;
-      applySearch();
+      applyFilters();
     }
 
     if (viewApply && viewSelect){
@@ -465,14 +475,33 @@
       });
     }
 
-    function applySearch(){
+    function updateResultCount(filtered, total){
+      if (!resultCountEl) return;
+      resultCountEl.textContent = total
+        ? (filtered === total
+            ? `${filtered} ${filtered === 1 ? 'inschrijving' : 'inschrijvingen'}`
+            : `${filtered} / ${total} zichtbaar`)
+        : 'Geen inschrijvingen';
+    }
+
+    function updateStats(data){
+      const counts = {total: data.length, waitlist: 0, cancelled: 0};
+      data.forEach(row => {
+        const st = row.status || '';
+        if (st === 'waitlist') counts.waitlist++;
+        if (st === 'cancelled') counts.cancelled++;
+      });
+      if (statTotal) statTotal.textContent = counts.total;
+      if (statWaitlist) statWaitlist.textContent = counts.waitlist;
+      if (statCancelled) statCancelled.textContent = counts.cancelled;
+    }
+
+    function applyFilters(){
       const term = (searchInput ? searchInput.value : '').toLowerCase().trim();
-      if (!term){
-        filteredData = currentData;
-        render(currentFields, filteredData);
-        return;
-      }
       filteredData = currentData.filter(row => {
+        const statusOk = !statusFilter || (row.status || '') === statusFilter;
+        if (!statusOk) return false;
+        if (!term) return true;
         return currentFields.some(f => {
           const val = row[f];
           if (val === null || val === undefined) return false;
@@ -480,10 +509,22 @@
         });
       });
       render(currentFields, filteredData);
+      updateResultCount(filteredData.length, currentData.length);
+      updateStats(filteredData);
     }
 
     if (searchInput){
-      searchInput.addEventListener('input', applySearch);
+      searchInput.addEventListener('input', applyFilters);
+    }
+
+    if (statusFilters){
+      statusFilters.addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        statusFilter = btn.dataset.status || '';
+        statusFilters.querySelectorAll('button').forEach(b => b.classList.toggle('is-active', b === btn));
+        applyFilters();
+      });
     }
 
     // Auto-load first event if available

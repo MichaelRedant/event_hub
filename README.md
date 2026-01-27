@@ -2,6 +2,13 @@
 
 Event Hub is een WordPress-plugin voor infosessies, opleidingen en webinars. De plugin combineert eventbeheer, inschrijvingen, e-mails en front-end weergave (Elementor + Gutenberg) in een lichte, Nederlandstalige ervaring.
 
+- **Snel starten (beginner)**:
+  1) Activeer de plugin en ga naar **Event Hub > Algemene instellingen**. Kies het type events: gebruik de ingebouwde `eh_session` of koppel je eigen CPT (selecteer slug + taxonomie).
+  2) Ga naar **E-mailinstellingen** en vul afzender/naam in. Laat de standaard sjablonen staan of pas ze later aan.
+  3) Maak een nieuw event aan bij **Evenementen**. Vul titel, datum, locatie/online link en (optioneel) capaciteit en boekingsvenster in. Publiceer.
+  4) Plaats een formulier op de site via een blok (Gutenberg: Event Hub Form), een Elementor-widget (categorie “Event Hub”) of shortcode `[event_hub_session id="EVENT_ID"]`. De REST-API en scripts worden automatisch geladen.
+  5) Test een inschrijving op de front-end. Controleer de inschrijving in **Event Hub > Inschrijvingen** of het **Eventdashboard**. Verzenden de mails? Pas zo nodig de sjablonen aan.
+
 - **Events**: eigen CPT `eh_session` of koppel een bestaand CPT; configureer taxonomie, labels, menu-icoon en positie. Metaboxen voor datum/tijd, locatie of online link, status, capaciteit en boekingsvenster, prijs/no-show fee, taal/doelgroep, agenda, collega's, ticketnotitie en per-event extra formulier-velden. Single layout modern of compact, met optionele eigen HTML/CSS/JS.
 - **Registraties**: eigen DB-tabel `eh_session_registrations` met REST endpoint (`POST /wp-json/event-hub/v1/register`) en JS helper (`assets/js/frontend-form.js`). Capaciteit en boekingsvenster checks, dubbele inschrijvingscontrole per event/e-mail, wachtlijst met automatische promotie, optionele reCAPTCHA (Google v3 of hCaptcha), honeypot en rate limiting. Admin kan inschrijvingen toevoegen/bewerken, status wijzigen en CSV-exporteren. Deelnemers kunnen zichzelf annuleren via een annulatielink.
 - **E-mail**: e-mailsjablonen via CPT `eh_email`, placeholders, extra placeholders uit settings. Automatische bevestiging, reminder en follow-up (per event override mogelijk) met cron scheduling. Opties voor afzender, transportkeuze en offsets. Placeholder `{cancel_link}` beschikbaar voor zelf-annulatie.

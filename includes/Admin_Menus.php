@@ -357,6 +357,22 @@ class Admin_Menus
 
         );
 
+        add_submenu_page(
+
+            'event-hub',
+
+            __('Info & About', 'event-hub'),
+
+            __('Info & About', 'event-hub'),
+
+            'edit_posts',
+
+            'event-hub-info',
+
+            [$this, 'render_about_page']
+
+        );
+
 
 
         add_submenu_page(
@@ -407,12 +423,6 @@ class Admin_Menus
 
         );
 
-        add_action('admin_head', static function () {
-
-            remove_submenu_page('event-hub', 'event-hub-event');
-
-        });
-
         add_action('admin_init', [$this, 'maybe_process_event_actions']);
 
     }
@@ -433,7 +443,18 @@ class Admin_Menus
 
         echo '<div class="wrap eh-admin">';
         echo '<h1>' . esc_html__('Event Hub', 'event-hub') . '</h1>';
-        echo '<p style="max-width:720px;color:#52616b;">' . esc_html__('Kies een startpunt om meteen te werken. Alle belangrijke onderdelen van de plugin in één overzicht.', 'event-hub') . '</p>';
+        echo '<p style="max-width:720px;color:#52616b;">' . esc_html__('Kies een startpunt om meteen te werken. Alle belangrijke onderdelen van de plugin in een overzicht.', 'event-hub') . '</p>';
+        echo '<div class="eh-card" style="margin:12px 0 18px;max-width:840px;background:#f8fbff;border:1px solid #dce7f5;border-radius:12px;padding:14px 16px;">';
+        echo '<h2 style="margin:0 0 8px;font-size:18px;">' . esc_html__('Snel aan de slag (beginner)', 'event-hub') . '</h2>';
+        echo '<ol style="margin:0 0 8px 18px;color:#334155;line-height:1.5;">';
+        echo '<li>' . esc_html__('Algemene instellingen: kies CPT/taxonomie en (optioneel) reCAPTCHA.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('E-mailinstellingen: stel afzender/naam in, laat de standaard sjablonen staan.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Maak een event aan met datum, locatie/online link en (optioneel) capaciteit.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Plaats een formulier via Gutenberg/Elementor of shortcode; de REST-API wordt automatisch gebruikt.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Test een inschrijving; check Inschrijvingen of het Eventdashboard en pas mails aan indien nodig.', 'event-hub') . '</li>';
+        echo '</ol>';
+        echo '<p style="margin:0;color:#475569;font-size:13px;">' . esc_html__('Tip: gebruik de kaarten hieronder om snel naar de juiste pagina te gaan.', 'event-hub') . '</p>';
+        echo '</div>';
 
         $cards = [
             [
@@ -523,6 +544,61 @@ class Admin_Menus
 
     }
 
+    public function render_about_page(): void
+    {
+        if (!current_user_can('edit_posts')) {
+            wp_die(__('Je hebt geen toegang tot deze pagina.', 'event-hub'));
+        }
+        $admin_email = get_option('admin_email');
+        echo '<div class="wrap eh-admin">';
+        echo '<h1>' . esc_html__('Over Event Hub', 'event-hub') . '</h1>';
+        echo '<p style="max-width:780px;color:#475569;">' . esc_html__('Event Hub bundelt events, inschrijvingen, mails en front-end widgets in één lichtgewicht plugin. Hieronder vind je een korte uitleg, links en een vleugje sluikreclame.', 'event-hub') . '</p>';
+
+        echo '<div class="eh-grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin-top:16px;">';
+        // Plugin info
+        echo '<div class="eh-card stat" style="display:flex;flex-direction:column;gap:10px;">';
+        echo '<h3 style="margin:0;font-size:17px;">' . esc_html__('Wat doet Event Hub?', 'event-hub') . '</h3>';
+        echo '<ul style="margin:0 0 6px 18px;color:#475569;line-height:1.5;">';
+        echo '<li>' . esc_html__('Beheer events (CPT), datum/locatie, capaciteit en wachtlijst.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Inschrijvingen met REST-formulier, dubbele-check en self-cancel link.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('E-mails: bevestiging, reminder, follow-up met sjablonen per event.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Front-end: Gutenberg blokken, Elementor widgets en shortcodes.', 'event-hub') . '</li>';
+        echo '</ul>';
+        echo '<p style="margin:0;color:#475569;">' . esc_html__('Gebruik de kaarten op de hoofdpagina om snel naar events, inschrijvingen of instellingen te springen.', 'event-hub') . '</p>';
+        echo '</div>';
+
+        // Quick start
+        echo '<div class="eh-card stat" style="display:flex;flex-direction:column;gap:10px;">';
+        echo '<h3 style="margin:0;font-size:17px;">' . esc_html__('Snel aan de slag', 'event-hub') . '</h3>';
+        echo '<ol style="margin:0 0 6px 18px;color:#334155;line-height:1.5;">';
+        echo '<li>' . esc_html__('Ga naar Algemene instellingen: kies CPT/tax en (optioneel) reCAPTCHA.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('E-mailinstellingen: vul afzender/naam in; start met de standaard sjablonen.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Maak een event met datum, locatie/online link en (optioneel) capaciteit.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Plaats het formulier via Gutenberg/Elementor of shortcode.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Test een inschrijving; check Inschrijvingen of het Eventdashboard.', 'event-hub') . '</li>';
+        echo '</ol>';
+        echo '</div>';
+
+        // About + contact
+        echo '<div class="eh-card stat" style="display:flex;flex-direction:column;gap:10px;">';
+        echo '<h3 style="margin:0;font-size:17px;">' . esc_html__('Over de maker', 'event-hub') . '</h3>';
+        echo '<p style="margin:0;color:#475569;">' . esc_html__('Event Hub is ontwikkeld door Michael Redant. Vragen, ideeën of bugs? Laat het weten.', 'event-hub') . '</p>';
+        if ($admin_email) {
+            echo '<p style="margin:0;color:#475569;"><strong>' . esc_html__('Contact', 'event-hub') . ':</strong> <a href="mailto:' . esc_attr($admin_email) . '">' . esc_html($admin_email) . '</a></p>';
+        }
+        echo '</div>';
+
+        // Cheeky X3DPrints plug
+        echo '<div class="eh-card stat" style="display:flex;flex-direction:column;gap:10px;background:#fef7ec;border:1px solid #f5d9a5;">';
+        echo '<h3 style="margin:0;font-size:17px;">' . esc_html__('Bonus: X3DPrints', 'event-hub') . '</h3>';
+        echo '<p style="margin:0;color:#8a5a09;">' . esc_html__('Naast plugins bouwen we ook 3D prints. Nuttige gadgets, custom stands, en dingen die niemand vroeg maar iedereen lacht: X3DPrints.', 'event-hub') . '</p>';
+        echo '<p style="margin:0;color:#8a5a09;font-size:13px;">' . esc_html__('Sluikreclame met een knipoog: “If it ain’t broke, print it in neon green anyway.”', 'event-hub') . '</p>';
+        echo '</div>';
+
+        echo '</div>'; // grid
+        echo '</div>'; // wrap
+    }
+
 
     public function enqueue_assets(string $hook): void
     {
@@ -539,6 +615,7 @@ class Admin_Menus
             'event-hub-event',
             'event-hub-stats',
             'event-hub-logs',
+            'event-hub-info',
         ];
 
         $toast = null;
@@ -779,6 +856,26 @@ class Admin_Menus
                     EVENT_HUB_VERSION
 
                 );
+
+                wp_enqueue_script(
+
+                    'event-hub-events-admin',
+
+                    EVENT_HUB_URL . 'assets/js/admin-events.js',
+
+                    [],
+
+                    EVENT_HUB_VERSION,
+
+                    true
+
+                );
+
+                wp_localize_script('event-hub-events-admin', 'EventHubEventsList', [
+                    'dashboardBase' => admin_url('admin.php?page=event-hub-event'),
+                    'cpt' => Settings::get_cpt_slug(),
+                    'title' => __('Open dashboard voor dit event', 'event-hub'),
+                ]);
 
             }
 
@@ -3207,7 +3304,39 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         if (!$event_id) {
 
-            echo '<div class="wrap eh-admin"><div class="notice notice-error"><p>' . esc_html__('Event niet gevonden.', 'event-hub') . '</p></div></div>';
+            $events = get_posts([
+                'post_type' => Settings::get_cpt_slug(),
+                'numberposts' => 200,
+                'orderby' => 'date',
+                'order' => 'DESC',
+            ]);
+
+            echo '<div class="wrap eh-admin eh-event-dashboard">';
+            echo '<h1>' . esc_html__('Eventdashboard', 'event-hub') . '</h1>';
+            echo '<p style="max-width:640px;color:#52616b;">' . esc_html__('Selecteer een event om het dashboard te openen.', 'event-hub') . '</p>';
+
+            if ($events) {
+                echo '<form method="get" class="eh-card" style="max-width:520px;display:grid;gap:12px;align-items:flex-start;">';
+                echo '<input type="hidden" name="page" value="event-hub-event">';
+                echo '<label style="display:grid;gap:6px;">';
+                echo '<span style="font-weight:600;">' . esc_html__('Event', 'event-hub') . '</span>';
+                echo '<select name="event_id" style="min-width:260px;">';
+                foreach ($events as $ev) {
+                    $start = get_post_meta($ev->ID, '_eh_date_start', true);
+                    $label_date = $start ? date_i18n(get_option('date_format'), strtotime((string) $start)) : '';
+                    $label = $label_date ? sprintf('%s - %s', $ev->post_title, $label_date) : $ev->post_title;
+                    echo '<option value="' . esc_attr((string) $ev->ID) . '">' . esc_html($label) . '</option>';
+                }
+                echo '</select>';
+                echo '</label>';
+                echo '<button type="submit" class="button button-primary">' . esc_html__('Open dashboard', 'event-hub') . '</button>';
+                echo '</form>';
+            } else {
+                echo '<div class="notice notice-warning"><p>' . esc_html__('Geen events gevonden. Maak eerst een event aan.', 'event-hub') . '</p></div>';
+                echo '<a class="button button-primary" href="' . esc_url(admin_url('post-new.php?post_type=' . Settings::get_cpt_slug())) . '">' . esc_html__('Nieuw event', 'event-hub') . '</a>';
+            }
+
+            echo '</div>';
 
             return;
 

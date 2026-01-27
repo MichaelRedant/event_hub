@@ -1840,14 +1840,16 @@ class CPT_Session
         $new['eh_dates'] = __('Planning', 'event-hub');
         $new['eh_location'] = __('Locatie', 'event-hub');
         $new['eh_registrations'] = __('Inschrijvingen', 'event-hub');
-        $new['eh_capacity'] = __('Capaciteit', 'event-hub');
         $new['eh_occupancy'] = __('Bezetting', 'event-hub');
-        $new['eh_status'] = __('Status', 'event-hub');
 
         $date_label = $columns['date'] ?? '';
         unset($columns['title'], $columns['date']);
 
         foreach ($columns as $key => $label) {
+            if (strpos($key, 'taxonomy-') === 0) {
+                // Verberg tag/tax kolommen voor een compactere lijst.
+                continue;
+            }
             $new[$key] = $label;
         }
 
@@ -1860,7 +1862,7 @@ class CPT_Session
 
     public function render_admin_column(string $column, int $post_id): void
     {
-        if (!in_array($column, ['eh_dates', 'eh_location', 'eh_capacity', 'eh_occupancy', 'eh_status', 'eh_registrations'], true)) {
+        if (!in_array($column, ['eh_dates', 'eh_location', 'eh_occupancy', 'eh_registrations'], true)) {
             return;
         }
         $state = $this->registrations->get_capacity_state($post_id);
@@ -1908,12 +1910,6 @@ class CPT_Session
             return;
         }
 
-        if ($column === 'eh_capacity') {
-            $capacity = $state['capacity'] > 0 ? $state['capacity'] : __('Onbeperkt', 'event-hub');
-            echo '<strong>' . esc_html((string) $capacity) . '</strong>';
-            return;
-        }
-
         if ($column === 'eh_registrations') {
             $occurrences = $this->registrations->get_occurrences($post_id);
             $booked_total = 0;
@@ -1955,19 +1951,6 @@ class CPT_Session
             }
             return;
         }
-
-        if ($column === 'eh_status') {
-            $status = get_post_meta($post_id, '_eh_status', true) ?: 'open';
-            $labels = [
-                'open' => __('Open', 'event-hub'),
-                'full' => __('Volzet', 'event-hub'),
-                'closed' => __('Gesloten', 'event-hub'),
-                'cancelled' => __('Geannuleerd', 'event-hub'),
-            ];
-            $class = 'status-' . sanitize_html_class($status);
-            echo '<span class="eh-badge-pill ' . esc_attr($class) . '">' . esc_html($labels[$status] ?? ucfirst($status)) . '</span>';
-            return;
-        }
     }
 
     public function admin_columns_styles(): void
@@ -1986,10 +1969,10 @@ class CPT_Session
         .column-eh_dates{width:190px}
         .column-eh_location{width:140px}
         .column-eh_registrations{width:110px}
-        .column-eh_capacity,.column-eh_occupancy,.column-eh_status{width:130px}
-        .column-eh_dates,.column-eh_location,.column-eh_registrations,.column-eh_capacity,.column-eh_occupancy,.column-eh_status{white-space:normal!important;word-break:break-word;line-height:1.4;}
+        .column-eh_occupancy{width:150px}
+        .column-eh_dates,.column-eh_location,.column-eh_registrations,.column-eh_occupancy{white-space:normal!important;word-break:break-word;line-height:1.4;}
         @media (max-width:1024px){
-            .column-eh_dates,.column-eh_location,.column-eh_registrations,.column-eh_capacity,.column-eh_occupancy,.column-eh_status{width:auto!important;min-width:120px;}
+            .column-eh_dates,.column-eh_location,.column-eh_registrations,.column-eh_occupancy{width:auto!important;min-width:120px;}
         }
         .eh-progress{background:#eef1f6;border-radius:999px;height:6px;margin-bottom:4px;overflow:hidden}
         .eh-progress-bar{display:block;height:100%;background:#2271b1;border-radius:999px}

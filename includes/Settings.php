@@ -591,6 +591,15 @@ class Settings
         $defs = $this->get_sync_field_definitions();
         $base = self::OPTION_GENERAL . '[linked_sync_map]';
         $post_field_hint = esc_html__('Postvelden: title, content, excerpt, date, modified, slug, status.', 'event-hub');
+        echo '<div class="notice notice-info" style="margin:12px 0;">';
+        echo '<p style="margin:0;"><strong>' . esc_html__('Hoe werkt veldkoppeling?', 'event-hub') . '</strong></p>';
+        echo '<ul style="margin:6px 0 0 18px; color:#334155;">';
+        echo '<li>' . esc_html__('Kies bij elke Event Hub-kolom of je data haalt uit een standaard postveld (title, content, ... ) of uit een meta key.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Postvelden synchroniseren rechtstreeks met het WordPress-bericht; meta keys gebruik je voor eigen velden of ACF.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Leeg laten betekent: niet overschrijven in de sync.', 'event-hub') . '</li>';
+        echo '<li>' . esc_html__('Tip: zet de conflictaanpak hierboven op "Vul alleen lege velden" als je Event Hub inhoud wilt behouden.', 'event-hub') . '</li>';
+        echo '</ul>';
+        echo '</div>';
         echo '<table class="widefat striped" style="max-width:980px;">';
         echo '<thead><tr><th>' . esc_html__('Event Hub veld', 'event-hub') . '</th><th>' . esc_html__('Bron type', 'event-hub') . '</th><th>' . esc_html__('Bron veld/meta key', 'event-hub') . '</th></tr></thead>';
         echo '<tbody>';
