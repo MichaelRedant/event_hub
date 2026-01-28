@@ -79,6 +79,102 @@ class Settings
             }, self::OPTION, 'octo_emails_main');
         }
 
+        // Standaard e-mailsjablonen per type (fallback voor events zonder selectie).
+        $default_templates = [
+            'default_confirm_templates' => [
+                'label' => __('Standaard bevestiging', 'event-hub'),
+                'desc' => __('Wordt gebruikt als een event geen specifieke bevestigingsmail selecteert.', 'event-hub'),
+            ],
+            'default_reminder_templates' => [
+                'label' => __('Standaard reminder', 'event-hub'),
+                'desc' => __('Wordt gebruikt als een event geen reminder kiest.', 'event-hub'),
+            ],
+            'default_followup_templates' => [
+                'label' => __('Standaard nadien', 'event-hub'),
+                'desc' => __('Wordt gebruikt als een event geen follow-up kiest.', 'event-hub'),
+            ],
+            'default_waitlist_templates' => [
+                'label' => __('Standaard wachtlijst', 'event-hub'),
+                'desc' => __('Wordt gebruikt voor wachtlijst en promotie wanneer er niets per event is ingesteld.', 'event-hub'),
+            ],
+            'default_event_cancelled_templates' => [
+                'label' => __('Standaard event annulatie', 'event-hub'),
+                'desc' => __('Wordt gebruikt bij event-annulatie als er geen event-specifiek sjabloon is.', 'event-hub'),
+            ],
+            'default_registration_cancelled_templates' => [
+                'label' => __('Standaard inschrijving geannuleerd', 'event-hub'),
+                'desc' => __('Wordt gebruikt als een event geen annulatie-mail selecteert.', 'event-hub'),
+            ],
+        ];
+        foreach ($default_templates as $field_key => $meta) {
+            add_settings_field($field_key, $meta['label'], function () use ($field_key, $meta) {
+                $opts = get_option(self::OPTION, []);
+                $selected = isset($opts[$field_key]) && is_array($opts[$field_key]) ? array_map('intval', $opts[$field_key]) : [];
+                $templates = get_posts([
+                    'post_type'   => CPT_Email::CPT,
+                    'numberposts' => -1,
+                    'orderby'     => 'title',
+                    'order'       => 'ASC',
+                ]);
+                echo '<select name="' . esc_attr(self::OPTION . '[' . $field_key . '][]') . '" multiple style="min-width:240px;min-height:120px;" class="eh-default-email-select" data-preview="' . esc_attr($field_key . '_preview') . '">';
+                if ($templates) {
+                    foreach ($templates as $tpl) {
+                        $lang_raw = (string) get_post_meta($tpl->ID, '_eh_email_language', true);
+                        $lang = $lang_raw ? '[' . strtoupper($lang_raw) . '] ' : '';
+                        $subject = (string) get_post_meta($tpl->ID, '_eh_email_subject', true);
+                        $body_raw = (string) get_post_meta($tpl->ID, '_eh_email_body', true);
+                        $body_safe = wp_kses_post($body_raw);
+                        $sel = in_array((int) $tpl->ID, $selected, true) ? 'selected' : '';
+                        echo '<option value="' . esc_attr((string) $tpl->ID) . '" data-subject="' . esc_attr($subject) . '" data-body-html="' . esc_attr($body_safe) . '" ' . $sel . '>' . esc_html($lang . $tpl->post_title) . '</option>';
+                    }
+                }
+                echo '</select>';
+                echo '<div id="' . esc_attr($field_key . '_preview') . '" class="eh-default-email-preview" style="margin-top:10px;"></div>';
+                if (!empty($meta['desc'])) {
+                    echo '<p class="description">' . esc_html($meta['desc']) . '</p>';
+                }
+                static $script_printed = false;
+                if (!$script_printed) {
+                    $script_printed = true;
+                    ?>
+                    <script>
+                    (function(){
+                        function renderPreview(select){
+                            var targetId = select.getAttribute('data-preview');
+                            var wrap = document.getElementById(targetId);
+                            if(!wrap){return;}
+                            var opts = Array.prototype.filter.call(select.options, function(o){ return o.selected; });
+                            if(!opts.length){
+                                wrap.innerHTML = '<em><?php echo esc_js(__('Geen sjabloon geselecteerd.', 'event-hub')); ?></em>';
+                                return;
+                            }
+                            var html = '';
+                            opts.forEach(function(o){
+                                var subj = o.getAttribute('data-subject') || '';
+                                var body = o.getAttribute('data-body-html') || '';
+                                html += '<div class="eh-email-preview-card" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:8px;background:#fff;">';
+                                html += '<strong style="display:block;margin-bottom:4px;">' + subj.replace(/</g,'&lt;') + '</strong>';
+                                if(body){
+                                    html += '<div style="color:#475569;">' + body + '</div>';
+                                }
+                                html += '</div>';
+                            });
+                            wrap.innerHTML = html;
+                        }
+                        document.addEventListener('DOMContentLoaded', function(){
+                            var selects = document.querySelectorAll('.eh-default-email-select');
+                            selects.forEach(function(sel){
+                                sel.addEventListener('change', function(){ renderPreview(sel); });
+                                renderPreview(sel);
+                            });
+                        });
+                    })();
+                    </script>
+                    <?php
+                }
+            }, self::OPTION, 'octo_emails_main');
+        }
+
         // Algemene instellingen
         register_setting(self::OPTION_GENERAL, self::OPTION_GENERAL, [
             'type' => 'array',
@@ -1350,6 +1446,21 @@ class Settings
         } else {
             $out['waitlist_timing_hours'] = 24;
         }
+        $default_template_keys = [
+            'default_confirm_templates',
+            'default_reminder_templates',
+            'default_followup_templates',
+            'default_waitlist_templates',
+            'default_event_cancelled_templates',
+            'default_registration_cancelled_templates',
+        ];
+        foreach ($default_template_keys as $k) {
+            if (!empty($input[$k]) && is_array($input[$k])) {
+                $out[$k] = array_values(array_unique(array_map('intval', $input[$k])));
+            } else {
+                $out[$k] = [];
+            }
+        }
         if (isset($input['custom_placeholders_raw'])) {
             $raw = (string) $input['custom_placeholders_raw'];
             $out['custom_placeholders_raw'] = wp_kses_post($raw);
@@ -1533,6 +1644,25 @@ class Settings
         return isset($opts['custom_placeholders']) && is_array($opts['custom_placeholders'])
             ? $opts['custom_placeholders']
             : [];
+    }
+
+    public static function get_default_templates(string $key): array
+    {
+        $map = [
+            'confirmation' => 'default_confirm_templates',
+            'reminder' => 'default_reminder_templates',
+            'followup' => 'default_followup_templates',
+            'waitlist' => 'default_waitlist_templates',
+            'waitlist_promotion' => 'default_waitlist_templates',
+            'event_cancelled' => 'default_event_cancelled_templates',
+            'registration_cancelled' => 'default_registration_cancelled_templates',
+        ];
+        $opts = get_option(self::OPTION, []);
+        $option_key = $map[$key] ?? '';
+        if (!$option_key || empty($opts[$option_key]) || !is_array($opts[$option_key])) {
+            return [];
+        }
+        return array_values(array_unique(array_map('intval', (array) $opts[$option_key])));
     }
 
     /**

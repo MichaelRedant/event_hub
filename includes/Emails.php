@@ -61,6 +61,18 @@ class Emails
         $this->logger = $logger;
     }
 
+    /**
+     * Haal e-mailsjablonen op. Als het event geen selectie heeft, val terug op de globale defaults.
+     */
+    private function get_templates_for_session(int $session_id, string $meta_key, string $default_key): array
+    {
+        $ids = array_values(array_filter((array) get_post_meta($session_id, $meta_key, true)));
+        if ($ids) {
+            return array_map('intval', $ids);
+        }
+        return Settings::get_default_templates($default_key);
+    }
+
     public function init(): void
     {
         add_action('event_hub_registration_created', [$this, 'handle_registration_created'], 10, 1);
@@ -137,7 +149,7 @@ class Emails
             $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'confirmation_custom');
             return;
         }
-        $tpl_ids = (array) get_post_meta($session_id, '_eh_email_confirm_templates', true);
+        $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_confirm_templates', 'confirmation');
         foreach ($tpl_ids as $tpl_id) {
             $subject = (string) get_post_meta((int)$tpl_id, '_eh_email_subject', true);
             $body    = (string) get_post_meta((int)$tpl_id, '_eh_email_body', true);
@@ -165,8 +177,8 @@ class Emails
             $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'reminder_custom');
             return;
         }
-        $tpl_ids = (array) get_post_meta($session_id, '_eh_email_reminder_templates', true);
-        foreach (array_filter($tpl_ids) as $tpl_id) {
+        $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_reminder_templates', 'reminder');
+        foreach ($tpl_ids as $tpl_id) {
             $subject = (string) get_post_meta((int)$tpl_id, '_eh_email_subject', true);
             $body    = (string) get_post_meta((int)$tpl_id, '_eh_email_body', true);
             $this->send_mail_with_placeholders($reg, $subject, $body, 'reminder');
@@ -187,8 +199,8 @@ class Emails
             $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'followup_custom');
             return;
         }
-        $tpl_ids = (array) get_post_meta($session_id, '_eh_email_followup_templates', true);
-        foreach (array_filter($tpl_ids) as $tpl_id) {
+        $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_followup_templates', 'followup');
+        foreach ($tpl_ids as $tpl_id) {
             $subject = (string) get_post_meta((int)$tpl_id, '_eh_email_subject', true);
             $body    = (string) get_post_meta((int)$tpl_id, '_eh_email_body', true);
             $this->send_mail_with_placeholders($reg, $subject, $body, 'followup');
@@ -206,11 +218,11 @@ class Emails
             $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'waitlist_promotion_custom');
             return;
         }
-        $tpl_ids = (array) get_post_meta($session_id, '_eh_email_waitlist_templates', true);
+        $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_waitlist_templates', 'waitlist_promotion');
         if (!$tpl_ids) {
             return;
         }
-        foreach (array_filter($tpl_ids) as $tpl_id) {
+        foreach ($tpl_ids as $tpl_id) {
             $subject = (string) get_post_meta((int) $tpl_id, '_eh_email_subject', true);
             $body    = (string) get_post_meta((int) $tpl_id, '_eh_email_body', true);
             $this->send_mail_with_placeholders($reg, $subject, $body, 'waitlist_promotion');
@@ -228,8 +240,8 @@ class Emails
             $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'waitlist_custom');
             return;
         }
-        $tpl_ids = (array) get_post_meta($session_id, '_eh_email_waitlist_templates', true);
-        foreach (array_filter($tpl_ids) as $tpl_id) {
+        $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_waitlist_templates', 'waitlist');
+        foreach ($tpl_ids as $tpl_id) {
             $subject = (string) get_post_meta((int)$tpl_id, '_eh_email_subject', true);
             $body    = (string) get_post_meta((int)$tpl_id, '_eh_email_body', true);
             $this->send_mail_with_placeholders($reg, $subject, $body, 'waitlist');
@@ -247,8 +259,8 @@ class Emails
             $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'registration_cancelled_custom');
             return;
         }
-        $tpl_ids = (array) get_post_meta($session_id, '_eh_email_registration_cancelled_templates', true);
-        foreach (array_filter($tpl_ids) as $tpl_id) {
+        $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_registration_cancelled_templates', 'registration_cancelled');
+        foreach ($tpl_ids as $tpl_id) {
             $subject = (string) get_post_meta((int) $tpl_id, '_eh_email_subject', true);
             $body    = (string) get_post_meta((int) $tpl_id, '_eh_email_body', true);
             $this->send_mail_with_placeholders($reg, $subject, $body, 'registration_cancelled');
@@ -263,7 +275,7 @@ class Emails
         if (!$registrations) { return; }
         $custom_subj = get_post_meta($session_id, '_eh_email_custom_event_cancelled_subject', true);
         $custom_body = get_post_meta($session_id, '_eh_email_custom_event_cancelled_body', true);
-        $tpl_ids = (array) get_post_meta($session_id, '_eh_email_event_cancelled_templates', true);
+        $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_event_cancelled_templates', 'event_cancelled');
         foreach ($registrations as $reg) {
             if (($reg['status'] ?? '') === 'cancelled') {
                 continue;

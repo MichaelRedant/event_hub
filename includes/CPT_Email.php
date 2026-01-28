@@ -49,6 +49,7 @@ class CPT_Email
         $subject = get_post_meta($post->ID, '_eh_email_subject', true);
         $body = get_post_meta($post->ID, '_eh_email_body', true);
         $type = get_post_meta($post->ID, '_eh_email_type', true);
+        $language = get_post_meta($post->ID, '_eh_email_language', true);
         $types = [
             '' => __('Vrij', 'event-hub'),
             'confirmation' => __('Bevestiging', 'event-hub'),
@@ -61,6 +62,10 @@ class CPT_Email
             echo '<option value="' . esc_attr($key) . '"' . selected($type, $key, false) . '>' . esc_html($label) . '</option>';
         }
         echo '</select></p>';
+
+        echo '<p><label><strong>' . esc_html__('Taalcode (optioneel)', 'event-hub') . '</strong></label><br/>';
+        echo '<input type="text" class="regular-text" name="_eh_email_language" value="' . esc_attr((string) $language) . '" placeholder="nl, fr, en" />';
+        echo '<span class="description" style="display:block;margin-top:4px;">' . esc_html__('Gebruik een korte code. Handig om NL/FR sjablonen te onderscheiden in events.', 'event-hub') . '</span></p>';
 
         echo '<p><label><strong>' . esc_html__('Onderwerp', 'event-hub') . '</strong></label><br/>';
         echo '<input type="text" class="regular-text" name="_eh_email_subject" value="' . esc_attr((string) $subject) . '" /></p>';
@@ -113,10 +118,12 @@ class CPT_Email
         $subject = isset($_POST['_eh_email_subject']) ? sanitize_text_field((string) $_POST['_eh_email_subject']) : '';
         $body = isset($_POST['_eh_email_body']) ? wp_kses_post((string) $_POST['_eh_email_body']) : '';
         $type = isset($_POST['_eh_email_type']) ? sanitize_text_field((string) $_POST['_eh_email_type']) : '';
+        $language = isset($_POST['_eh_email_language']) ? sanitize_text_field((string) $_POST['_eh_email_language']) : '';
 
         update_post_meta($post_id, '_eh_email_subject', $subject);
         update_post_meta($post_id, '_eh_email_body', $body);
         update_post_meta($post_id, '_eh_email_type', $type);
+        update_post_meta($post_id, '_eh_email_language', $language);
 
         $status = get_post_status($post_id);
         if (in_array($status, ['draft', 'auto-draft'], true) && current_user_can('publish_post', $post_id)) {

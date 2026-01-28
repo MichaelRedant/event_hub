@@ -775,6 +775,29 @@ class CPT_Session
             'orderby'    => 'title',
             'order'      => 'ASC',
         ]);
+        $event_language = strtolower((string) ($language ?: ''));
+        // Sort templates so the event language appears first, then other tagged languages, then untagged.
+        if ($emails && $event_language) {
+            usort($emails, static function (\WP_Post $a, \WP_Post $b) use ($event_language): int {
+                $a_lang = strtolower((string) get_post_meta($a->ID, '_eh_email_language', true));
+                $b_lang = strtolower((string) get_post_meta($b->ID, '_eh_email_language', true));
+                $rank = static function (string $lang) use ($event_language): int {
+                    if ($lang === $event_language) {
+                        return 0;
+                    }
+                    if ($lang === '') {
+                        return 2;
+                    }
+                    return 1;
+                };
+                $a_rank = $rank($a_lang);
+                $b_rank = $rank($b_lang);
+                if ($a_rank === $b_rank) {
+                    return strcasecmp($a->post_title, $b->post_title);
+                }
+                return $a_rank < $b_rank ? -1 : 1;
+            });
+        }
         $sel_confirm = (array) get_post_meta($post->ID, '_eh_email_confirm_templates', true);
         $sel_remind  = (array) get_post_meta($post->ID, '_eh_email_reminder_templates', true);
         $sel_follow  = (array) get_post_meta($post->ID, '_eh_email_followup_templates', true);
@@ -1450,8 +1473,11 @@ class CPT_Session
                         echo '<label style="font-weight:600;">' . esc_html__('Sjabloon', 'event-hub') . '</label>';
                         echo '<select name="' . esc_attr($card['select_name']) . '[]" multiple class="eh-template-select" style="min-height:90px;">';
                         foreach ($emails as $e) {
+                            $lang_raw = (string) get_post_meta($e->ID, '_eh_email_language', true);
+                            $lang = strtoupper(trim($lang_raw));
+                            $label = $lang ? '[' . $lang . '] ' . $e->post_title : $e->post_title;
                             $sel = in_array((string) $e->ID, array_map('strval', $card['selected']), true) ? 'selected' : '';
-                            echo '<option value="' . esc_attr((string) $e->ID) . '" ' . $sel . '>' . esc_html($e->post_title) . '</option>';
+                            echo '<option value="' . esc_attr((string) $e->ID) . '" data-lang="' . esc_attr($lang_raw) . '" ' . $sel . '>' . esc_html($label) . '</option>';
                         }
                         echo '</select>';
                         echo '</div>';
