@@ -60,6 +60,7 @@ class Activator
         return [
             'from_name' => get_bloginfo('name'),
             'from_email' => get_option('admin_email'),
+            'mail_transport' => 'php',
             // Legacy days key blijft staan voor backwards compat, maar we sturen op uren.
             'reminder_offset_hours' => 24,
             'reminder_offset_days' => 3,

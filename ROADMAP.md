@@ -1,5 +1,7 @@
 # Event Hub Roadmap (post-launch)
 
+Nota: voor de aparte mail-robuustheidsaanpak (uitgevoerde fixes + volgende stappen), zie `ROADMAP_MAIL_ROBUST.md`.
+
 Deze roadmap vat de gewenste aanpassingen samen en bundelt vaste e-mailsjablonen
 als referentie voor implementatie in de seed/migraties.
 

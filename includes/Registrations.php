@@ -654,7 +654,7 @@ class Registrations
                 ['%d']
             );
 
-            if ($updated === false) {
+            if ($updated !== 1) {
                 break;
             }
 
@@ -795,6 +795,7 @@ class Registrations
             'role' => isset($params['role']) ? sanitize_text_field((string) $params['role']) : null,
             'people_count' => isset($params['people_count']) ? (int) $params['people_count'] : 1,
             'consent_marketing' => !empty($params['consent_marketing']) ? 1 : 0,
+            'waitlist_opt_in' => !empty($params['waitlist_opt_in']) ? 1 : 0,
             'extra' => $extra,
         ];
 

@@ -430,17 +430,7 @@
         fields.push(fieldInput('last_name', getMessage('last_name', 'Familienaam'), true));
         fields.push(fieldInput('email', getMessage('email', 'E-mail'), true, 'email'));
         if (Array.isArray(session.occurrences) && session.occurrences.length) {
-            const baseOption = session.date_label || session.time_range ? {
-                id: 0,
-                date_label: session.date_label || '',
-                time_range: session.time_range || '',
-                availability_label: session.availability_label || '',
-                waitlist_label: session.waitlist_label || '',
-                state: session.state || {},
-                location_name: session.location_label || '',
-                location_address: session.address || '',
-            } : null;
-            fields.unshift(occurrenceCards(session.occurrences, session.occurrence_id || 0, baseOption));
+            fields.unshift(occurrenceCards(session.occurrences, session.occurrence_id || 0, null));
         }
         if (!hide.includes('phone')) {
             fields.push(fieldInput('phone', getMessage('phone', 'Telefoon'), false));
@@ -533,7 +523,7 @@
             });
         }
         occurrences.forEach((occ) => list.push(occ));
-        const items = (list || []).map((occ) => {
+        const items = (list || []).map((occ, index) => {
             const id = Number(occ.id);
             const isSelected = id === Number(selectedId);
             const date = occ.date_label || '';
@@ -541,6 +531,7 @@
             const availability = occ.availability_label || '';
             const waitlist = occ.waitlist_label || '';
             const loc = occ.location_name || occ.location_address || '';
+            const required = index === 0 ? ' required' : '';
             const dataAttrs = `
                 data-date-label="${occ.date_label || ''}"
                 data-time-range="${occ.time_range || ''}"
@@ -553,7 +544,7 @@
             const badge = availability ? `<span class="eh-occ-badge">${availability}</span>` : '';
             return `
             <label class="eh-occ-card">
-                <input type="radio" name="occurrence_id" value="${id}" ${isSelected ? 'checked' : ''} ${dataAttrs}>
+                <input type="radio" name="occurrence_id" value="${id}" ${isSelected ? 'checked' : ''}${required} ${dataAttrs}>
                 <div class="eh-occ-card__body">
                     <div class="eh-occ-card__header">
                         <div class="eh-occ-card__date">${date || getMessage('choose', 'Maak een keuze')}</div>
@@ -720,7 +711,7 @@
             loadCaptchaScript('hcaptcha', `https://js.hcaptcha.com/1/api.js?render=${captcha.site_key}`, () => {
                 if (window.hcaptcha) {
                     window.hcaptcha.ready(() => {
-                        window.hcaptcha.execute(captcha.site_key, { action: 'eventhub_register' }).then((token) => {
+                        window.hcaptcha.execute(captcha.site_key, { action: 'event_hub_register' }).then((token) => {
                             const target = document.getElementById('eh_captcha_token');
                             if (target) {
                                 target.value = token;
@@ -733,7 +724,7 @@
             loadCaptchaScript('grecaptcha', `https://www.google.com/recaptcha/api.js?render=${captcha.site_key}`, () => {
                 if (window.grecaptcha) {
                     window.grecaptcha.ready(() => {
-                        window.grecaptcha.execute(captcha.site_key, { action: 'eventhub_register' }).then((token) => {
+                        window.grecaptcha.execute(captcha.site_key, { action: 'event_hub_register' }).then((token) => {
                             const target = document.getElementById('eh_captcha_token');
                             if (target) {
                                 target.value = token;

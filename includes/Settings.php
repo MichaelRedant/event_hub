@@ -37,7 +37,7 @@ class Settings
         foreach ($fields as [$key, $label, $type]) {
             add_settings_field($key, $label, function () use ($key, $type) {
                 $opts = get_option(self::OPTION, []);
-                $val = $opts[$key] ?? '';
+                $val = $opts[$key] ?? ($key === 'mail_transport' ? 'php' : '');
                 $name = self::OPTION . "[{$key}]";
                 if ($type === 'textarea') {
                     echo '<textarea class="large-text code" rows="6" name="' . esc_attr($name) . '">' . esc_textarea((string) $val) . '</textarea>';
@@ -1635,7 +1635,13 @@ class Settings
 
     public static function get_email_settings(): array
     {
-        return get_option(self::OPTION, []);
+        $opts = get_option(self::OPTION, []);
+        if (!is_array($opts)) {
+            $opts = [];
+        }
+        return wp_parse_args($opts, [
+            'mail_transport' => 'php',
+        ]);
     }
 
     public static function get_custom_placeholders(): array
@@ -1657,12 +1663,79 @@ class Settings
             'event_cancelled' => 'default_event_cancelled_templates',
             'registration_cancelled' => 'default_registration_cancelled_templates',
         ];
-        $opts = get_option(self::OPTION, []);
+        $opts = self::get_email_settings();
         $option_key = $map[$key] ?? '';
-        if (!$option_key || empty($opts[$option_key]) || !is_array($opts[$option_key])) {
+        if ($option_key && !empty($opts[$option_key]) && is_array($opts[$option_key])) {
+            $selected = array_values(array_unique(array_filter(array_map('intval', (array) $opts[$option_key]))));
+            if ($selected) {
+                return $selected;
+            }
+        }
+
+        return self::get_seeded_default_template_ids($key);
+    }
+
+    private static function get_seeded_default_template_ids(string $key): array
+    {
+        static $cache = [];
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
+        }
+
+        $system_keys_map = [
+            'confirmation' => ['confirmation_default'],
+            'reminder' => ['reminder_default'],
+            'followup' => ['followup_default'],
+            'waitlist' => ['waitlist_default'],
+            'waitlist_promotion' => ['waitlist_promotion_default'],
+            'event_cancelled' => ['event_cancelled_default'],
+            'registration_cancelled' => ['registration_cancelled_default'],
+        ];
+        $system_keys = $system_keys_map[$key] ?? [];
+        if (!$system_keys) {
+            $cache[$key] = [];
             return [];
         }
-        return array_values(array_unique(array_map('intval', (array) $opts[$option_key])));
+
+        $ids = self::find_template_ids_by_system_keys($system_keys);
+        if (!$ids) {
+            Activator::seed_default_templates();
+            $ids = self::find_template_ids_by_system_keys($system_keys);
+        }
+
+        $cache[$key] = array_values(array_unique($ids));
+        return $cache[$key];
+    }
+
+    /**
+     * @param array<int,string> $system_keys
+     * @return array<int,int>
+     */
+    private static function find_template_ids_by_system_keys(array $system_keys): array
+    {
+        $ids = [];
+        foreach ($system_keys as $system_key) {
+            $matches = get_posts([
+                'post_type' => CPT_Email::CPT,
+                'post_status' => ['publish', 'future'],
+                'posts_per_page' => 1,
+                'fields' => 'ids',
+                'meta_query' => [
+                    [
+                        'key' => '_eh_email_system_key',
+                        'value' => $system_key,
+                        'compare' => '=',
+                    ],
+                ],
+                'orderby' => 'ID',
+                'order' => 'ASC',
+                'suppress_filters' => true,
+            ]);
+            if ($matches) {
+                $ids[] = (int) $matches[0];
+            }
+        }
+        return $ids;
     }
 
     /**

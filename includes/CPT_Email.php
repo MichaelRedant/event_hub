@@ -93,17 +93,15 @@ class CPT_Email
 
         $current_user = wp_get_current_user();
         $default_test = $current_user && $current_user->user_email ? $current_user->user_email : get_option('admin_email');
+        $test_nonce = wp_create_nonce('eh_email_send_test');
+        $recipient_input_id = 'eh_test_recipient_' . (int) $post->ID;
         echo '<hr />';
         echo '<h4>' . esc_html__('Test', 'event-hub') . '</h4>';
         echo '<p>' . esc_html__('Verzend een testmail met voorbeelddata.', 'event-hub') . '</p>';
-        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
-        echo '<input type="hidden" name="action" value="eh_email_send_test" />';
-        echo '<input type="hidden" name="post_id" value="' . esc_attr((string) $post->ID) . '" />';
-        wp_nonce_field('eh_email_send_test', 'eh_email_send_test_nonce');
         echo '<label><span style="display:inline-block;margin-bottom:4px;font-weight:600;">' . esc_html__('Verzend naar', 'event-hub') . '</span><br />';
-        echo '<input type="email" name="eh_test_recipient" value="' . esc_attr((string) $default_test) . '" class="regular-text" required /></label>';
-        echo '<p><button type="submit" class="button">' . esc_html__('Verzend test', 'event-hub') . '</button></p>';
-        echo '</form>';
+        echo '<input type="email" id="' . esc_attr($recipient_input_id) . '" value="' . esc_attr((string) $default_test) . '" class="regular-text" required /></label>';
+        echo '<p><button type="button" class="button eh-email-send-test" data-action="' . esc_url(admin_url('admin-post.php')) . '" data-post-id="' . esc_attr((string) $post->ID) . '" data-nonce="' . esc_attr($test_nonce) . '" data-input-id="' . esc_attr($recipient_input_id) . '">' . esc_html__('Verzend test', 'event-hub') . '</button></p>';
+        echo '<script>(function(){if(window.__ehEmailTestInit){return;}window.__ehEmailTestInit=true;document.addEventListener("click",function(e){var btn=e.target.closest(".eh-email-send-test");if(!btn){return;}e.preventDefault();var inputId=btn.getAttribute("data-input-id")||"";var input=inputId?document.getElementById(inputId):null;var recipient=input?input.value.trim():"";if(!recipient){if(input){input.focus();}return;}var form=document.createElement("form");form.method="post";form.action=btn.getAttribute("data-action")||"";var fields={action:"eh_email_send_test",post_id:btn.getAttribute("data-post-id")||"",eh_email_send_test_nonce:btn.getAttribute("data-nonce")||"",eh_test_recipient:recipient};Object.keys(fields).forEach(function(key){var field=document.createElement("input");field.type="hidden";field.name=key;field.value=fields[key];form.appendChild(field);});document.body.appendChild(form);form.submit();});})();</script>';
     }
 
     public function save_meta_boxes(int $post_id): void
@@ -126,7 +124,7 @@ class CPT_Email
         update_post_meta($post_id, '_eh_email_language', $language);
 
         $status = get_post_status($post_id);
-        if (in_array($status, ['draft', 'auto-draft'], true) && current_user_can('publish_post', $post_id)) {
+        if (in_array($status, ['draft', 'auto-draft', 'pending'], true) && current_user_can('edit_post', $post_id)) {
             remove_action('save_post', [$this, 'save_meta_boxes']);
             wp_update_post([
                 'ID' => $post_id,
@@ -147,6 +145,26 @@ class CPT_Email
                 'post'   => $post_id,
                 'action' => 'edit',
                 'message'=> isset($_GET['message']) ? (int) $_GET['message'] : 1,
+            ],
+            admin_url('post.php')
+        );
+    }
+
+    public function intercept_wp_redirect(string $location, int $status): string
+    {
+        $post_id = isset($_POST['post_ID']) ? (int) $_POST['post_ID'] : 0;
+        if ($post_id <= 0 && isset($_GET['post'])) {
+            $post_id = (int) $_GET['post'];
+        }
+        if ($post_id <= 0 || get_post_type($post_id) !== self::CPT) {
+            return $location;
+        }
+
+        return add_query_arg(
+            [
+                'post' => $post_id,
+                'action' => 'edit',
+                'message' => isset($_GET['message']) ? (int) $_GET['message'] : 1,
             ],
             admin_url('post.php')
         );
@@ -192,11 +210,24 @@ class CPT_Email
         $body_f = strtr($body ?: __('Dit is een test van Event Hub.', 'event-hub'), $sample);
         $headers = ['Content-Type: text/html; charset=UTF-8'];
         $filter_content_type = static function () { return 'text/html; charset=UTF-8'; };
+        $mail_error_message = '';
+        $mail_failed_capture = static function (\WP_Error $error) use (&$mail_error_message): void {
+            $message = trim((string) $error->get_error_message());
+            if ($message !== '') {
+                $mail_error_message = $message;
+            }
+        };
         add_filter('wp_mail_content_type', $filter_content_type, 999);
-        wp_mail($recipient, $subject_f, $body_f, $headers);
+        add_action('wp_mail_failed', $mail_failed_capture, 10, 1);
+        $sent = wp_mail($recipient, $subject_f, $body_f, $headers);
+        remove_action('wp_mail_failed', $mail_failed_capture, 10);
         remove_filter('wp_mail_content_type', $filter_content_type, 999);
         $ok_url = get_edit_post_link($post_id, 'raw') ?: admin_url('post.php?post=' . $post_id . '&action=edit');
-        wp_safe_redirect(add_query_arg(['eh_test_result' => 'ok'], $ok_url));
+        if (!$sent && $mail_error_message !== '') {
+            $key = 'event_hub_test_mail_error_' . get_current_user_id() . '_' . $post_id;
+            set_transient($key, wp_strip_all_tags($mail_error_message), 10 * MINUTE_IN_SECONDS);
+        }
+        wp_safe_redirect(add_query_arg(['eh_test_result' => $sent ? 'ok' : 'fail'], $ok_url));
         exit;
     }
 
@@ -216,7 +247,14 @@ class CPT_Email
         if ($result === 'ok') {
             echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Testmail verzonden.', 'event-hub') . '</p></div>';
         } elseif ($result === 'fail') {
-            echo '<div class="notice notice-error is-dismissible"><p>' . esc_html__('Testmail versturen mislukt.', 'event-hub') . '</p></div>';
+            $message = __('Testmail versturen mislukt.', 'event-hub');
+            $key = 'event_hub_test_mail_error_' . get_current_user_id() . '_' . $post_id;
+            $error = get_transient($key);
+            if (is_string($error) && $error !== '') {
+                $message .= ' ' . sprintf(__('Fout: %s', 'event-hub'), $error);
+                delete_transient($key);
+            }
+            echo '<div class="notice notice-error is-dismissible"><p>' . esc_html($message) . '</p></div>';
         }
     }
 }

@@ -119,8 +119,7 @@ class Emails
                 if ($reminder_ts <= time()) {
                     $reminder_ts = time() + MINUTE_IN_SECONDS;
                 }
-                wp_schedule_single_event($reminder_ts, 'event_hub_send_reminder', [$registration_id]);
-                $this->trigger_wp_cron_async();
+                $this->schedule_single_email_event($reminder_ts, 'event_hub_send_reminder', [$registration_id]);
             }
         }
 
@@ -132,8 +131,7 @@ class Emails
             $hours = ($event_hours === '' || $event_hours === null) ? (int) ($opts['followup_offset_hours'] ?? 24) : (int) $event_hours;
             $follow_ts = $ts + ($hours * HOUR_IN_SECONDS);
             if ($follow_ts > time()) {
-                wp_schedule_single_event($follow_ts, 'event_hub_send_followup', [$registration_id]);
-                $this->trigger_wp_cron_async();
+                $this->schedule_single_email_event($follow_ts, 'event_hub_send_followup', [$registration_id]);
             }
         }
     }
@@ -142,11 +140,22 @@ class Emails
     {
         $reg = $this->registrations->get_registration($registration_id);
         if (!$reg) { return; }
+        $registration_status = (string) ($reg['status'] ?? '');
+        if (!in_array($registration_status, ['registered', 'confirmed'], true)) {
+            return;
+        }
+        $session_status = get_post_meta((int) $reg['session_id'], '_eh_status', true) ?: 'open';
+        if (in_array($session_status, ['cancelled', 'closed'], true)) {
+            return;
+        }
+        if ($this->should_throttle($registration_id, 'confirmation', 3 * HOUR_IN_SECONDS)) {
+            return;
+        }
         $session_id = (int) $reg['session_id'];
         $custom_subj = get_post_meta($session_id, '_eh_email_custom_confirmation_subject', true);
         $custom_body = get_post_meta($session_id, '_eh_email_custom_confirmation_body', true);
         if ($custom_subj !== '' && $custom_body !== '') {
-            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'confirmation_custom');
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'confirmation');
             return;
         }
         $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_confirm_templates', 'confirmation');
@@ -174,7 +183,7 @@ class Emails
         $custom_subj = get_post_meta($session_id, '_eh_email_custom_reminder_subject', true);
         $custom_body = get_post_meta($session_id, '_eh_email_custom_reminder_body', true);
         if ($custom_subj !== '' && $custom_body !== '') {
-            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'reminder_custom');
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'reminder');
             return;
         }
         $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_reminder_templates', 'reminder');
@@ -189,6 +198,14 @@ class Emails
     {
         $reg = $this->registrations->get_registration($registration_id);
         if (!$reg) { return; }
+        $registration_status = (string) ($reg['status'] ?? '');
+        if (in_array($registration_status, ['cancelled', 'waitlist'], true)) {
+            return;
+        }
+        $session_status = get_post_meta((int) $reg['session_id'], '_eh_status', true) ?: 'open';
+        if ($session_status === 'cancelled') {
+            return;
+        }
         $session_id = (int) $reg['session_id'];
         if ($this->should_throttle($registration_id, 'followup', 3 * HOUR_IN_SECONDS)) {
             return;
@@ -196,7 +213,7 @@ class Emails
         $custom_subj = get_post_meta($session_id, '_eh_email_custom_followup_subject', true);
         $custom_body = get_post_meta($session_id, '_eh_email_custom_followup_body', true);
         if ($custom_subj !== '' && $custom_body !== '') {
-            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'followup_custom');
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'followup');
             return;
         }
         $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_followup_templates', 'followup');
@@ -211,11 +228,22 @@ class Emails
     {
         $reg = $this->registrations->get_registration($registration_id);
         if (!$reg) { return; }
+        $registration_status = (string) ($reg['status'] ?? '');
+        if (!in_array($registration_status, ['registered', 'confirmed'], true)) {
+            return;
+        }
+        $session_status = get_post_meta((int) $reg['session_id'], '_eh_status', true) ?: 'open';
+        if (in_array($session_status, ['cancelled', 'closed'], true)) {
+            return;
+        }
+        if ($this->should_throttle($registration_id, 'waitlist_promotion', 3 * HOUR_IN_SECONDS)) {
+            return;
+        }
         $session_id = (int) $reg['session_id'];
         $custom_subj = get_post_meta($session_id, '_eh_email_custom_waitlist_promotion_subject', true);
         $custom_body = get_post_meta($session_id, '_eh_email_custom_waitlist_promotion_body', true);
         if ($custom_subj !== '' && $custom_body !== '') {
-            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'waitlist_promotion_custom');
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'waitlist_promotion');
             return;
         }
         $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_waitlist_templates', 'waitlist_promotion');
@@ -233,11 +261,21 @@ class Emails
     {
         $reg = $this->registrations->get_registration($registration_id);
         if (!$reg) { return; }
+        if ((string) ($reg['status'] ?? '') !== 'waitlist') {
+            return;
+        }
+        $session_status = get_post_meta((int) $reg['session_id'], '_eh_status', true) ?: 'open';
+        if (in_array($session_status, ['cancelled', 'closed'], true)) {
+            return;
+        }
+        if ($this->should_throttle($registration_id, 'waitlist', 3 * HOUR_IN_SECONDS)) {
+            return;
+        }
         $session_id = (int) $reg['session_id'];
         $custom_subj = get_post_meta($session_id, '_eh_email_custom_waitlist_subject', true);
         $custom_body = get_post_meta($session_id, '_eh_email_custom_waitlist_body', true);
         if ($custom_subj !== '' && $custom_body !== '') {
-            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'waitlist_custom');
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'waitlist');
             return;
         }
         $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_waitlist_templates', 'waitlist');
@@ -252,11 +290,17 @@ class Emails
     {
         $reg = $this->registrations->get_registration($registration_id);
         if (!$reg) { return; }
+        if ((string) ($reg['status'] ?? '') !== 'cancelled') {
+            return;
+        }
+        if ($this->should_throttle($registration_id, 'registration_cancelled', 3 * HOUR_IN_SECONDS)) {
+            return;
+        }
         $session_id = (int) $reg['session_id'];
         $custom_subj = get_post_meta($session_id, '_eh_email_custom_registration_cancelled_subject', true);
         $custom_body = get_post_meta($session_id, '_eh_email_custom_registration_cancelled_body', true);
         if ($custom_subj !== '' && $custom_body !== '') {
-            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'registration_cancelled_custom');
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'registration_cancelled');
             return;
         }
         $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_registration_cancelled_templates', 'registration_cancelled');
@@ -273,23 +317,18 @@ class Emails
         if ($session_id <= 0) { return; }
         $registrations = $this->registrations->get_registrations_by_session($session_id);
         if (!$registrations) { return; }
-        $custom_subj = get_post_meta($session_id, '_eh_email_custom_event_cancelled_subject', true);
-        $custom_body = get_post_meta($session_id, '_eh_email_custom_event_cancelled_body', true);
-        $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_event_cancelled_templates', 'event_cancelled');
         foreach ($registrations as $reg) {
-            if (($reg['status'] ?? '') === 'cancelled') {
-                continue;
-            }
-            if ($custom_subj !== '' && $custom_body !== '') {
-                $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'event_cancelled_custom');
-                continue;
-            }
-            foreach (array_filter($tpl_ids) as $tpl_id) {
-                $subject = (string) get_post_meta((int) $tpl_id, '_eh_email_subject', true);
-                $body    = (string) get_post_meta((int) $tpl_id, '_eh_email_body', true);
-                $this->send_mail_with_placeholders($reg, $subject, $body, 'event_cancelled');
-            }
+            $this->send_event_cancelled_for_registration_data($reg);
         }
+    }
+
+    public function send_event_cancelled_for_registration(int $registration_id): void
+    {
+        $reg = $this->registrations->get_registration($registration_id);
+        if (!$reg) {
+            return;
+        }
+        $this->send_event_cancelled_for_registration_data($reg);
     }
 
     public function handle_waitlist_created(int $registration_id): void
@@ -317,6 +356,7 @@ class Emails
         $session_id = (int) $reg['session_id'];
         $post = get_post($session_id);
         if (!$post) { return false; }
+        $type = $this->normalize_mail_type($type);
 
         $replacements = $this->build_placeholder_map($reg, $post);
 
@@ -339,7 +379,16 @@ class Emails
         add_filter('wp_mail_content_type', $filter_content_type, 999);
         $attempt = $this->next_attempt_counter((int) ($reg['id'] ?? 0), $type);
         $this->log_email_event('attempt', $type, $reg, ['attempt' => $attempt, 'subject' => $subject_f]);
+        $mail_error_message = '';
+        $mail_failed_capture = static function (\WP_Error $error) use (&$mail_error_message): void {
+            $message = trim((string) $error->get_error_message());
+            if ($message !== '') {
+                $mail_error_message = $message;
+            }
+        };
+        add_action('wp_mail_failed', $mail_failed_capture, 10, 1);
         $sent = wp_mail($reg['email'], $subject_f, $body_f, $headers);
+        remove_action('wp_mail_failed', $mail_failed_capture, 10);
         remove_filter('wp_mail_from', $filter_from);
         remove_filter('wp_mail_from_name', $filter_name);
         remove_filter('wp_mail_content_type', $filter_content_type, 999);
@@ -353,7 +402,7 @@ class Emails
             $this->mark_email_sent((int) ($reg['id'] ?? 0), $type, 3 * HOUR_IN_SECONDS);
             $this->reset_attempt_counter((int) ($reg['id'] ?? 0), $type);
         } else {
-            $this->log_email_event('failed', $type, $reg, ['attempt' => $attempt]);
+            $this->log_email_event('failed', $type, $reg, ['attempt' => $attempt, 'error' => $mail_error_message]);
             $this->schedule_retry((int) ($reg['id'] ?? 0), $type);
         }
         if ($this->logger) {
@@ -364,6 +413,7 @@ class Emails
                 'to' => $reg['email'],
                 'subject' => $subject_f,
                 'result' => $sent ? 'sent' : 'failed',
+                'error' => $mail_error_message,
             ]);
         }
 
@@ -599,19 +649,13 @@ class Emails
         if ($target_ts <= time()) {
             $target_ts = time() + MINUTE_IN_SECONDS;
         }
-        wp_schedule_single_event($target_ts, $hook, [$registration_id]);
-        $this->trigger_wp_cron_async();
+        $this->schedule_single_email_event($target_ts, $hook, [$registration_id]);
     }
 
     public function retry_email(int $registration_id, string $type): void
     {
-        $map = [
-            'confirmation' => 'send_confirmation',
-            'reminder' => 'send_reminder',
-            'followup' => 'send_followup',
-            'waitlist' => 'send_waitlist_created',
-            'waitlist_promotion' => 'send_waitlist_promotion',
-        ];
+        $type = $this->normalize_mail_type($type);
+        $map = $this->get_retry_callback_map();
         if (!isset($map[$type]) || !method_exists($this, $map[$type])) {
             return;
         }
@@ -621,12 +665,16 @@ class Emails
 
     private function schedule_retry(int $registration_id, string $type): void
     {
+        $type = $this->normalize_mail_type($type);
+        $map = $this->get_retry_callback_map();
+        if (!isset($map[$type])) {
+            return;
+        }
         $attempts = $this->get_attempt_counter($registration_id, $type);
         if ($attempts >= 3) {
             return;
         }
-        wp_schedule_single_event(time() + 300, 'event_hub_retry_email', [$registration_id, $type]);
-        $this->trigger_wp_cron_async();
+        $this->schedule_single_email_event(time() + 300, 'event_hub_retry_email', [$registration_id, $type]);
     }
 
     private function should_throttle(int $registration_id, string $type, int $window): bool
@@ -687,6 +735,84 @@ class Emails
             'status' => $status,
         ], $extra);
         $this->logger->log('email', 'Email ' . $status, $ctx);
+    }
+
+    /**
+     * Normalize mail type tokens so retries/throttling stay consistent for custom variants.
+     */
+    private function normalize_mail_type(string $type): string
+    {
+        $type = sanitize_key($type);
+        $map = [
+            'confirmation_custom' => 'confirmation',
+            'reminder_custom' => 'reminder',
+            'followup_custom' => 'followup',
+            'waitlist_custom' => 'waitlist',
+            'waitlist_promotion_custom' => 'waitlist_promotion',
+            'registration_cancelled_custom' => 'registration_cancelled',
+            'event_cancelled_custom' => 'event_cancelled',
+        ];
+        return $map[$type] ?? $type;
+    }
+
+    /**
+     * @return array<string,string>
+     */
+    private function get_retry_callback_map(): array
+    {
+        return [
+            'confirmation' => 'send_confirmation',
+            'reminder' => 'send_reminder',
+            'followup' => 'send_followup',
+            'waitlist' => 'send_waitlist_created',
+            'waitlist_promotion' => 'send_waitlist_promotion',
+            'registration_cancelled' => 'send_registration_cancelled',
+            'event_cancelled' => 'send_event_cancelled_for_registration',
+        ];
+    }
+
+    /**
+     * @param array<string,mixed> $reg
+     */
+    private function send_event_cancelled_for_registration_data(array $reg): void
+    {
+        if (($reg['status'] ?? '') === 'cancelled') {
+            return;
+        }
+        $registration_id = (int) ($reg['id'] ?? 0);
+        if ($registration_id > 0 && $this->should_throttle($registration_id, 'event_cancelled', 3 * HOUR_IN_SECONDS)) {
+            return;
+        }
+        $session_id = (int) ($reg['session_id'] ?? 0);
+        if ($session_id <= 0) {
+            return;
+        }
+        $custom_subj = get_post_meta($session_id, '_eh_email_custom_event_cancelled_subject', true);
+        $custom_body = get_post_meta($session_id, '_eh_email_custom_event_cancelled_body', true);
+        if ($custom_subj !== '' && $custom_body !== '') {
+            $this->send_mail_with_placeholders($reg, (string) $custom_subj, (string) $custom_body, 'event_cancelled');
+            return;
+        }
+        $tpl_ids = $this->get_templates_for_session($session_id, '_eh_email_event_cancelled_templates', 'event_cancelled');
+        foreach (array_filter($tpl_ids) as $tpl_id) {
+            $subject = (string) get_post_meta((int) $tpl_id, '_eh_email_subject', true);
+            $body    = (string) get_post_meta((int) $tpl_id, '_eh_email_body', true);
+            $this->send_mail_with_placeholders($reg, $subject, $body, 'event_cancelled');
+        }
+    }
+
+    /**
+     * Schedule a single event only when the exact hook+args pair is not already queued.
+     *
+     * @param array<int,mixed> $args
+     */
+    private function schedule_single_email_event(int $timestamp, string $hook, array $args): void
+    {
+        if (wp_next_scheduled($hook, $args)) {
+            return;
+        }
+        wp_schedule_single_event($timestamp, $hook, $args);
+        $this->trigger_wp_cron_async();
     }
 
     /**

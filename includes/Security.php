@@ -72,9 +72,18 @@ class Security
         if (is_wp_error($resp)) { return false; }
         $data = json_decode(wp_remote_retrieve_body($resp), true);
         if (empty($data['success'])) { return false; }
-        if (isset($data['action']) && $data['action'] !== $action) { return false; }
+        if (isset($data['action'])) {
+            $response_action = (string) $data['action'];
+            $allowed_actions = array_values(array_unique(array_filter([
+                (string) $action,
+                'event_hub_register',
+                'eventhub_register', // legacy action still present in older frontend bundles
+            ])));
+            if (!in_array($response_action, $allowed_actions, true)) {
+                return false;
+            }
+        }
         $score = isset($data['score']) ? (float) $data['score'] : 0;
         return $score >= self::score_threshold();
     }
 }
-

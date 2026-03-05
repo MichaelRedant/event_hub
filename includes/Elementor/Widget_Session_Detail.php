@@ -1026,24 +1026,9 @@ class Widget_Session_Detail extends Widget_Base
         echo '<div class="field" style="display:none !important;"><label>' . esc_html__('Laat leeg', 'event-hub') . '</label><input type="text" name="_eh_hp" value=""></div>';
         echo '<input type="hidden" name="session_id" value="' . esc_attr((string) $session_id) . '" />';
         if ($occurrences) {
-            // Basisdata (hoofd-event) die we in beide layouts gebruiken.
-            $base_state = $this->registrations->get_capacity_state($session_id, 0);
-            $base_date = get_post_meta($session_id, '_eh_date_start', true);
-            $base_end = get_post_meta($session_id, '_eh_date_end', true);
-            $base_title = get_the_title($session_id);
-            $base_date_label = $base_date ? date_i18n($date_format, strtotime($base_date)) : '';
-            $base_time_start = $base_date ? date_i18n(get_option('time_format'), strtotime($base_date)) : '';
-            $base_time_end = $base_end ? date_i18n(get_option('time_format'), strtotime($base_end)) : '';
-            $base_time_range = $base_time_start && $base_time_end ? $base_time_start . ' - ' . $base_time_end : $base_time_start;
-            $base_avail = $base_state['capacity'] > 0
-                ? sprintf(_n('%d plaats vrij', '%d plaatsen vrij', $base_state['available'], 'event-hub'), $base_state['available'])
-                : __('Onbeperkt', 'event-hub');
-            $base_waitlist = $base_state['waitlist'] > 0
-                ? sprintf(_n('%d persoon op de wachtlijst', '%d personen op de wachtlijst', $base_state['waitlist'], 'event-hub'), $base_state['waitlist'])
-                : __('Geen wachtlijst', 'event-hub');
+            // Basisdata (hoofd-event) voor fallback locatie.
             $base_address = get_post_meta($session_id, '_eh_address', true);
             $base_location_name = get_post_meta($session_id, '_eh_location', true);
-            $base_location_label = $base_location_name ?: $base_address;
 
             $occ_style = [];
             if ($occ_columns_setting === 'auto') {
@@ -1060,36 +1045,8 @@ class Widget_Session_Detail extends Widget_Base
             if ($occ_use_cards) {
                 echo '<span class="eh-occ-label">' . esc_html__('Kies datum', 'event-hub') . ' *</span>';
                 echo '<div class="eh-occ-list" role="radiogroup">';
-                $base_checked = $selected_occurrence_id === 0 ? ' checked' : '';
 
-                echo '<label class="eh-occ-card">';
-                echo '<input type="radio" name="occurrence_id" value="0"' . $base_checked
-                    . ' data-date-label="' . esc_attr($base_date_label) . '"'
-                    . ' data-time-range="' . esc_attr($base_time_range) . '"'
-                    . ' data-availability="' . esc_attr($base_avail) . '"'
-                    . ' data-waitlist="' . esc_attr($base_waitlist) . '"'
-                    . ' data-location="' . esc_attr($base_location_name) . '"'
-                    . ' data-location-address="' . esc_attr($base_address) . '"'
-                    . ' data-full="' . esc_attr($base_state['is_full'] ? '1' : '0') . '"'
-                    . ' required />';
-                echo '<div class="eh-occ-card__body">';
-                echo '<div class="eh-occ-card__header">';
-                echo '<div class="eh-occ-card__date">' . esc_html($base_date_label ?: $base_title) . '</div>';
-                if ($base_avail) {
-                    echo '<span class="eh-occ-badge">' . esc_html($base_avail) . '</span>';
-                }
-                echo '</div>';
-                echo '<div class="eh-occ-card__meta">';
-                if ($base_time_range) {
-                    echo '<span>' . esc_html($base_time_range) . '</span>';
-                }
-                if ($base_location_label) {
-                    echo '<span class="eh-occ-card__loc">' . esc_html($base_location_label) . '</span>';
-                }
-                echo '</div>';
-                echo '</div>';
-                echo '</label>';
-
+                $required_added = false;
                 foreach ($occurrences as $occ) {
                     $occ_id = (int) ($occ['id'] ?? 0);
                     if ($occ_id <= 0) {
@@ -1112,9 +1069,12 @@ class Widget_Session_Detail extends Widget_Base
                     $occ_location_name = $occ['location_name'] ?? '';
                     $occ_location_label = $occ_location_name ?: $occ_address;
                     $checked = $selected_occurrence_id === $occ_id ? ' checked' : '';
+                    $required = $required_added ? '' : ' required';
+                    $required_added = true;
 
                     echo '<label class="eh-occ-card">';
                     echo '<input type="radio" name="occurrence_id" value="' . esc_attr((string) $occ_id) . '"' . $checked
+                        . $required
                         . ' data-date-label="' . esc_attr($occ_date) . '"'
                         . ' data-time-range="' . esc_attr($occ_time_range) . '"'
                         . ' data-availability="' . esc_attr($occ_avail) . '"'
@@ -1147,19 +1107,6 @@ class Widget_Session_Detail extends Widget_Base
                 echo '<label for="occurrence_id">' . esc_html__('Kies datum', 'event-hub') . ' *</label>';
                 echo '<select name="occurrence_id" id="occurrence_id" required>';
                 echo '<option value="">' . esc_html__('Maak een keuze', 'event-hub') . '</option>';
-
-                $base_selected = $selected_occurrence_id === 0 ? ' selected' : '';
-                $base_label_parts = array_filter([$base_title, $base_date_label, $base_time_range, $base_location_label, $base_avail]);
-                $base_option_label = implode(' | ', $base_label_parts);
-                echo '<option value="0"' . $base_selected
-                    . ' data-date-label="' . esc_attr($base_date_label) . '"'
-                    . ' data-time-range="' . esc_attr($base_time_range) . '"'
-                    . ' data-availability="' . esc_attr($base_avail) . '"'
-                    . ' data-waitlist="' . esc_attr($base_waitlist) . '"'
-                    . ' data-location="' . esc_attr($base_location_name) . '"'
-                    . ' data-location-address="' . esc_attr($base_address) . '"'
-                    . ' data-full="' . esc_attr($base_state['is_full'] ? '1' : '0') . '"'
-                    . '>' . esc_html($base_option_label ?: $base_title) . '</option>';
 
                 foreach ($occurrences as $occ) {
                     $occ_id = (int) ($occ['id'] ?? 0);
@@ -1412,10 +1359,10 @@ class Widget_Session_Detail extends Widget_Base
         echo '<input type="hidden" name="eh_captcha_token" id="eh_captcha_token" value="">';
         if ($provider === 'hcaptcha') {
             echo '<script src="https://js.hcaptcha.com/1/api.js?render=' . esc_attr($site_key) . '" async defer></script>';
-            echo '<script>window.addEventListener("load",function(){if(window.hcaptcha){hcaptcha.ready(function(){hcaptcha.execute("' . esc_js($site_key) . '",{action:"eventhub_register"}).then(function(token){var el=document.getElementById("eh_captcha_token");if(el){el.value=token;}});});}});</script>';
+            echo '<script>window.addEventListener("load",function(){if(window.hcaptcha){hcaptcha.ready(function(){hcaptcha.execute("' . esc_js($site_key) . '",{action:"event_hub_register"}).then(function(token){var el=document.getElementById("eh_captcha_token");if(el){el.value=token;}});});}});</script>';
         } else {
             echo '<script src="https://www.google.com/recaptcha/api.js?render=' . esc_attr($site_key) . '"></script>';
-            echo '<script>document.addEventListener("DOMContentLoaded",function(){if(window.grecaptcha){grecaptcha.ready(function(){grecaptcha.execute("' . esc_js($site_key) . '",{action:"eventhub_register"}).then(function(token){var el=document.getElementById("eh_captcha_token");if(el){el.value=token;}});});}});</script>';
+            echo '<script>document.addEventListener("DOMContentLoaded",function(){if(window.grecaptcha){grecaptcha.ready(function(){grecaptcha.execute("' . esc_js($site_key) . '",{action:"event_hub_register"}).then(function(token){var el=document.getElementById("eh_captcha_token");if(el){el.value=token;}});});}});</script>';
         }
     }
 

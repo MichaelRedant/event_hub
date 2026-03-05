@@ -84,6 +84,7 @@ class Plugin
         add_action('add_meta_boxes', [$this->cpt_email, 'register_meta_boxes']);
         add_action('save_post', [$this->cpt_email, 'save_meta_boxes']);
         add_filter('redirect_post_location', [$this->cpt_email, 'keep_edit_redirect'], 90, 2);
+        add_filter('wp_redirect', [$this->cpt_email, 'intercept_wp_redirect'], 110, 2);
         add_action('admin_post_eh_email_send_test', [$this->cpt_email, 'handle_send_test']);
         add_action('admin_notices', [$this->cpt_email, 'maybe_notice_test']);
 
