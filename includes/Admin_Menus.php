@@ -1220,6 +1220,656 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
     }
 
+    /**
+     * @param array<int,array<string,mixed>> $logs
+     */
+    private function render_mail_diagnostics_panel(array $logs): void
+    {
+        $snapshot = $this->collect_mail_diagnostics_snapshot($logs);
+        $status = (string) ($snapshot['health_status'] ?? 'unknown');
+        $status_label = [
+            'ok' => __('OK', 'event-hub'),
+            'warning' => __('Waarschuwing', 'event-hub'),
+            'error' => __('Fout', 'event-hub'),
+            'unknown' => __('Niet gedraaid', 'event-hub'),
+        ][$status] ?? __('Onbekend', 'event-hub');
+        $e2e_status = (string) ($snapshot['e2e_status'] ?? 'unknown');
+        $e2e_status_label = [
+            'ok' => __('OK', 'event-hub'),
+            'warning' => __('Waarschuwing', 'event-hub'),
+            'error' => __('Fout', 'event-hub'),
+            'unknown' => __('Niet gedraaid', 'event-hub'),
+        ][$e2e_status] ?? __('Onbekend', 'event-hub');
+
+        echo '<div class="eh-panel" style="margin:14px 0 18px;">';
+        echo '<div class="eh-panel__head" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">';
+        echo '<h2>' . esc_html__('Maildiagnose', 'event-hub') . '</h2>';
+        echo '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">';
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline-flex;gap:8px;align-items:center;">';
+        echo '<input type="hidden" name="action" value="event_hub_mail_health_check">';
+        wp_nonce_field('event_hub_mail_health_check', 'event_hub_mail_health_check_nonce');
+        echo '<button type="submit" class="button button-secondary">' . esc_html__('Mail health check', 'event-hub') . '</button>';
+        echo '</form>';
+        echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:inline-flex;gap:8px;align-items:center;">';
+        echo '<input type="hidden" name="action" value="event_hub_mail_e2e_check">';
+        wp_nonce_field('event_hub_mail_e2e_check', 'event_hub_mail_e2e_check_nonce');
+        echo '<button type="submit" class="button button-secondary">' . esc_html__('E2E regressiecheck', 'event-hub') . '</button>';
+        echo '</form>';
+        echo '</div>';
+        echo '</div>';
+
+        echo '<div class="eh-stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-bottom:12px;">';
+        echo '<div class="eh-stat-card"><h3>' . esc_html__('Transport', 'event-hub') . '</h3><div class="value">' . esc_html((string) $snapshot['transport']) . '</div></div>';
+        echo '<div class="eh-stat-card"><h3>' . esc_html__('Retries ingepland', 'event-hub') . '</h3><div class="value">' . esc_html((string) $snapshot['retry_total']) . '</div></div>';
+        echo '<div class="eh-stat-card"><h3>' . esc_html__('Volgende mailjob', 'event-hub') . '</h3><div class="value" style="font-size:16px;">' . esc_html((string) $snapshot['next_job_label']) . '</div></div>';
+        echo '<div class="eh-stat-card"><h3>' . esc_html__('Laatste health check', 'event-hub') . '</h3><div class="value" style="font-size:16px;">' . esc_html($status_label) . '</div></div>';
+        echo '<div class="eh-stat-card"><h3>' . esc_html__('Laatste E2E check', 'event-hub') . '</h3><div class="value" style="font-size:16px;">' . esc_html($e2e_status_label) . '</div></div>';
+        echo '</div>';
+
+        $health_items = isset($snapshot['health_items']) && is_array($snapshot['health_items']) ? $snapshot['health_items'] : [];
+        if ($health_items) {
+            echo '<div class="eh-card" style="margin-bottom:12px;">';
+            echo '<h3 style="margin-top:0;">' . esc_html__('Resultaat health check', 'event-hub') . '</h3>';
+            echo '<ul style="margin:0 0 0 18px;line-height:1.5;">';
+            foreach ($health_items as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $level = isset($item['level']) ? sanitize_key((string) $item['level']) : 'ok';
+                $icon = $level === 'error' ? '[ERR]' : ($level === 'warning' ? '[WARN]' : '[OK]');
+                $msg = isset($item['message']) ? (string) $item['message'] : '';
+                if ($msg === '') {
+                    continue;
+                }
+                echo '<li><strong>' . esc_html($icon) . '</strong> ' . esc_html($msg) . '</li>';
+            }
+            echo '</ul>';
+            echo '</div>';
+        }
+
+        $last_errors = isset($snapshot['last_errors']) && is_array($snapshot['last_errors']) ? $snapshot['last_errors'] : [];
+        echo '<div class="eh-card" style="margin-bottom:12px;">';
+        echo '<h3 style="margin-top:0;">' . esc_html__('Laatste fout per mailtype', 'event-hub') . '</h3>';
+        if (!$last_errors) {
+            echo '<p style="margin:0;">' . esc_html__('Geen recente mailfouten gevonden in de logs.', 'event-hub') . '</p>';
+        } else {
+            echo '<table class="widefat striped"><thead><tr>';
+            echo '<th>' . esc_html__('Type', 'event-hub') . '</th>';
+            echo '<th>' . esc_html__('Tijd', 'event-hub') . '</th>';
+            echo '<th>' . esc_html__('Fout', 'event-hub') . '</th>';
+            echo '<th>' . esc_html__('Retry', 'event-hub') . '</th>';
+            echo '</tr></thead><tbody>';
+            foreach ($last_errors as $row) {
+                if (!is_array($row)) {
+                    continue;
+                }
+                $ts = isset($row['ts']) ? (int) $row['ts'] : 0;
+                $type = isset($row['type']) ? (string) $row['type'] : '';
+                $error = isset($row['error']) ? (string) $row['error'] : '';
+                $retry_attempt = isset($row['retry_attempt']) ? (int) $row['retry_attempt'] : 0;
+                $time_label = $ts > 0 ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $ts) : '-';
+                echo '<tr>';
+                echo '<td>' . esc_html($type) . '</td>';
+                echo '<td>' . esc_html($time_label) . '</td>';
+                echo '<td>' . esc_html($error !== '' ? $error : __('Onbekende fout', 'event-hub')) . '</td>';
+                echo '<td>' . esc_html((string) $retry_attempt) . '</td>';
+                echo '</tr>';
+            }
+            echo '</tbody></table>';
+        }
+        echo '</div>';
+
+        $e2e_items = isset($snapshot['e2e_items']) && is_array($snapshot['e2e_items']) ? $snapshot['e2e_items'] : [];
+        if ($e2e_items) {
+            echo '<div class="eh-card" style="margin-bottom:12px;">';
+            echo '<h3 style="margin-top:0;">' . esc_html__('Resultaat E2E regressiecheck', 'event-hub') . '</h3>';
+            echo '<ul style="margin:0 0 0 18px;line-height:1.5;">';
+            foreach ($e2e_items as $item) {
+                if (!is_array($item)) {
+                    continue;
+                }
+                $level = isset($item['level']) ? sanitize_key((string) $item['level']) : 'ok';
+                $icon = $level === 'error' ? '[ERR]' : ($level === 'warning' ? '[WARN]' : '[OK]');
+                $msg = isset($item['message']) ? (string) $item['message'] : '';
+                if ($msg === '') {
+                    continue;
+                }
+                echo '<li><strong>' . esc_html($icon) . '</strong> ' . esc_html($msg) . '</li>';
+            }
+            echo '</ul>';
+            echo '</div>';
+        }
+
+        $next_jobs = isset($snapshot['next_jobs']) && is_array($snapshot['next_jobs']) ? $snapshot['next_jobs'] : [];
+        echo '<div class="eh-card">';
+        echo '<h3 style="margin-top:0;">' . esc_html__('Volgende geplande mailjobs', 'event-hub') . '</h3>';
+        if (!$next_jobs) {
+            echo '<p style="margin:0;">' . esc_html__('Geen geplande mailjobs gevonden.', 'event-hub') . '</p>';
+        } else {
+            echo '<table class="widefat striped"><thead><tr>';
+            echo '<th>' . esc_html__('Tijd', 'event-hub') . '</th>';
+            echo '<th>' . esc_html__('Hook', 'event-hub') . '</th>';
+            echo '<th>' . esc_html__('Type', 'event-hub') . '</th>';
+            echo '<th>' . esc_html__('Registratie', 'event-hub') . '</th>';
+            echo '</tr></thead><tbody>';
+            foreach ($next_jobs as $job) {
+                if (!is_array($job)) {
+                    continue;
+                }
+                $ts = isset($job['timestamp']) ? (int) $job['timestamp'] : 0;
+                $hook = isset($job['hook']) ? (string) $job['hook'] : '';
+                $type = isset($job['mail_type']) ? (string) $job['mail_type'] : '';
+                $reg_id = isset($job['registration_id']) ? (int) $job['registration_id'] : 0;
+                $time_label = $ts > 0 ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $ts) : '-';
+                echo '<tr>';
+                echo '<td>' . esc_html($time_label) . '</td>';
+                echo '<td><code>' . esc_html($hook) . '</code></td>';
+                echo '<td>' . esc_html($type) . '</td>';
+                echo '<td>' . esc_html($reg_id > 0 ? (string) $reg_id : '-') . '</td>';
+                echo '</tr>';
+            }
+            echo '</tbody></table>';
+        }
+        echo '</div>';
+        echo '</div>';
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $logs
+     * @return array<string,mixed>
+     */
+    private function collect_mail_diagnostics_snapshot(array $logs): array
+    {
+        $settings = Settings::get_email_settings();
+        $transport = sanitize_key((string) ($settings['mail_transport'] ?? 'php'));
+        if (!in_array($transport, ['php', 'smtp_plugin'], true)) {
+            $transport = 'php';
+        }
+        $next_jobs = $this->collect_next_mail_jobs(10);
+        $retry_total = 0;
+        foreach ($next_jobs as $job) {
+            if (!is_array($job)) {
+                continue;
+            }
+            if (($job['hook'] ?? '') === 'event_hub_retry_email') {
+                $retry_total++;
+            }
+        }
+        $next_job_label = __('Geen', 'event-hub');
+        if ($next_jobs) {
+            $first_ts = isset($next_jobs[0]['timestamp']) ? (int) $next_jobs[0]['timestamp'] : 0;
+            if ($first_ts > 0) {
+                $next_job_label = date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $first_ts);
+            }
+        }
+
+        $health = get_transient($this->get_mail_health_check_transient_key());
+        if (!is_array($health)) {
+            $health = [];
+        }
+        $e2e = get_transient($this->get_mail_e2e_check_transient_key());
+        if (!is_array($e2e)) {
+            $e2e = [];
+        }
+
+        return [
+            'transport' => $transport === 'smtp_plugin' ? __('SMTP plugin', 'event-hub') : __('PHP mail', 'event-hub'),
+            'retry_total' => $retry_total,
+            'next_job_label' => $next_job_label,
+            'next_jobs' => $next_jobs,
+            'last_errors' => $this->extract_last_email_errors_per_type($logs),
+            'health_status' => isset($health['status']) ? (string) $health['status'] : 'unknown',
+            'health_items' => isset($health['items']) && is_array($health['items']) ? $health['items'] : [],
+            'e2e_status' => isset($e2e['status']) ? (string) $e2e['status'] : 'unknown',
+            'e2e_items' => isset($e2e['items']) && is_array($e2e['items']) ? $e2e['items'] : [],
+        ];
+    }
+
+    /**
+     * @param array<int,array<string,mixed>> $logs
+     * @return array<int,array<string,mixed>>
+     */
+    private function extract_last_email_errors_per_type(array $logs): array
+    {
+        $rows = [];
+        foreach ($logs as $log) {
+            if (!is_array($log)) {
+                continue;
+            }
+            if (($log['type'] ?? '') !== 'email') {
+                continue;
+            }
+            $ctx = isset($log['context']) && is_array($log['context']) ? $log['context'] : [];
+            $status = (string) ($ctx['status'] ?? '');
+            $result = (string) ($ctx['result'] ?? '');
+            if ($status !== 'failed' && $result !== 'failed') {
+                continue;
+            }
+            $type = sanitize_key((string) ($ctx['type'] ?? 'unknown'));
+            if ($type === '') {
+                $type = 'unknown';
+            }
+            if (isset($rows[$type])) {
+                continue;
+            }
+            $rows[$type] = [
+                'type' => $type,
+                'ts' => isset($log['ts']) ? (int) $log['ts'] : 0,
+                'error' => (string) ($ctx['error'] ?? $log['message'] ?? ''),
+                'retry_attempt' => isset($ctx['retry_attempt']) ? (int) $ctx['retry_attempt'] : 0,
+            ];
+        }
+        return array_values($rows);
+    }
+
+    /**
+     * @return array<int,array<string,mixed>>
+     */
+    private function collect_next_mail_jobs(int $limit = 10): array
+    {
+        if (!function_exists('_get_cron_array')) {
+            require_once ABSPATH . 'wp-includes/cron.php';
+        }
+        $crons = _get_cron_array();
+        if (!$crons || !is_array($crons)) {
+            return [];
+        }
+
+        $target_hooks = [
+            'event_hub_send_reminder',
+            'event_hub_send_followup',
+            'event_hub_send_confirmation',
+            'event_hub_send_waitlist_created',
+            'event_hub_retry_email',
+        ];
+        $now = time();
+        $jobs = [];
+
+        foreach ($crons as $timestamp => $bucket) {
+            if (!is_array($bucket) || (int) $timestamp < $now) {
+                continue;
+            }
+            foreach ($bucket as $hook => $instances) {
+                if (!in_array($hook, $target_hooks, true) || !is_array($instances)) {
+                    continue;
+                }
+                foreach ($instances as $instance) {
+                    if (!is_array($instance)) {
+                        continue;
+                    }
+                    $args = isset($instance['args']) && is_array($instance['args']) ? $instance['args'] : [];
+                    $jobs[] = [
+                        'timestamp' => (int) $timestamp,
+                        'hook' => $hook,
+                        'mail_type' => Emails::resolve_mail_type_from_hook($hook, $args),
+                        'registration_id' => isset($args[0]) ? (int) $args[0] : 0,
+                    ];
+                }
+            }
+        }
+
+        usort($jobs, static function (array $a, array $b): int {
+            return ((int) ($a['timestamp'] ?? 0)) <=> ((int) ($b['timestamp'] ?? 0));
+        });
+
+        if ($limit > 0 && count($jobs) > $limit) {
+            $jobs = array_slice($jobs, 0, $limit);
+        }
+        return $jobs;
+    }
+
+    public function handle_mail_health_check(): void
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Je hebt geen toegang.', 'event-hub'));
+        }
+        if (!isset($_POST['event_hub_mail_health_check_nonce']) || !wp_verify_nonce(sanitize_text_field((string) $_POST['event_hub_mail_health_check_nonce']), 'event_hub_mail_health_check')) {
+            wp_die(__('Ongeldige aanvraag.', 'event-hub'));
+        }
+
+        $report = $this->run_mail_health_check();
+        set_transient($this->get_mail_health_check_transient_key(), $report, 10 * MINUTE_IN_SECONDS);
+        wp_safe_redirect(add_query_arg(['page' => 'event-hub-logs'], admin_url('admin.php')));
+        exit;
+    }
+
+    public function handle_mail_e2e_check(): void
+    {
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Je hebt geen toegang.', 'event-hub'));
+        }
+        if (!isset($_POST['event_hub_mail_e2e_check_nonce']) || !wp_verify_nonce(sanitize_text_field((string) $_POST['event_hub_mail_e2e_check_nonce']), 'event_hub_mail_e2e_check')) {
+            wp_die(__('Ongeldige aanvraag.', 'event-hub'));
+        }
+
+        $report = $this->run_mail_e2e_regression_check();
+        set_transient($this->get_mail_e2e_check_transient_key(), $report, 15 * MINUTE_IN_SECONDS);
+        wp_safe_redirect(add_query_arg(['page' => 'event-hub-logs'], admin_url('admin.php')));
+        exit;
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function run_mail_health_check(): array
+    {
+        $items = [];
+        $settings = Settings::get_email_settings();
+        $from_email = sanitize_email((string) ($settings['from_email'] ?? ''));
+        $from_name = trim((string) ($settings['from_name'] ?? ''));
+        $transport = sanitize_key((string) ($settings['mail_transport'] ?? 'php'));
+        if (!in_array($transport, ['php', 'smtp_plugin'], true)) {
+            $transport = 'php';
+        }
+
+        if ($from_email === '' || !is_email($from_email)) {
+            $items[] = ['level' => 'error', 'message' => __('Afzender e-mail is leeg of ongeldig.', 'event-hub')];
+        } else {
+            $items[] = ['level' => 'ok', 'message' => sprintf(__('Afzender e-mail OK: %s', 'event-hub'), $from_email)];
+        }
+
+        if ($from_name === '') {
+            $items[] = ['level' => 'warning', 'message' => __('Afzendernaam is leeg.', 'event-hub')];
+        } else {
+            $items[] = ['level' => 'ok', 'message' => sprintf(__('Afzendernaam OK: %s', 'event-hub'), $from_name)];
+        }
+
+        if ($transport === 'smtp_plugin') {
+            $smtp_hook_present = has_action('phpmailer_init') !== false;
+            if ($smtp_hook_present) {
+                $items[] = ['level' => 'ok', 'message' => __('SMTP transport gekozen en PHPMailer hook gedetecteerd.', 'event-hub')];
+            } else {
+                $items[] = ['level' => 'warning', 'message' => __('SMTP transport gekozen, maar geen PHPMailer hook gevonden. Controleer je SMTP plugin.', 'event-hub')];
+            }
+        } else {
+            $items[] = ['level' => 'ok', 'message' => __('PHP mail transport actief.', 'event-hub')];
+        }
+
+        $template_issues = Settings::get_core_template_integrity_issues();
+        if ($template_issues) {
+            foreach ($template_issues as $issue) {
+                $items[] = ['level' => 'error', 'message' => (string) $issue];
+            }
+        } else {
+            $items[] = ['level' => 'ok', 'message' => __('Kernsjablonen zijn aanwezig en gevuld.', 'event-hub')];
+        }
+
+        $required_types = ['confirmation', 'reminder', 'followup', 'waitlist', 'waitlist_promotion', 'event_cancelled', 'registration_cancelled'];
+        foreach ($required_types as $type) {
+            $ids = Settings::get_default_templates($type);
+            if (!$ids) {
+                $items[] = ['level' => 'error', 'message' => sprintf(__('Geen default template beschikbaar voor type: %s.', 'event-hub'), $type)];
+            }
+        }
+
+        $next_jobs = $this->collect_next_mail_jobs(1);
+        if ($next_jobs) {
+            $first = $next_jobs[0];
+            $ts = isset($first['timestamp']) ? (int) $first['timestamp'] : 0;
+            $label = $ts > 0 ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $ts) : __('onbekend', 'event-hub');
+            $items[] = ['level' => 'ok', 'message' => sprintf(__('Volgende geplande mailjob: %s', 'event-hub'), $label)];
+        } else {
+            $items[] = ['level' => 'warning', 'message' => __('Geen geplande mailjobs gevonden. Dit kan normaal zijn als er geen toekomstige mails gepland zijn.', 'event-hub')];
+        }
+
+        $cron_key = (string) get_option('event_hub_cron_key', '');
+        if ($cron_key === '') {
+            $items[] = ['level' => 'warning', 'message' => __('Externe cron key ontbreekt. Genereer een key op de Event Hub info-pagina voor no-cron pings.', 'event-hub')];
+        } else {
+            $items[] = ['level' => 'ok', 'message' => __('Externe cron key aanwezig.', 'event-hub')];
+        }
+
+        $status = 'ok';
+        foreach ($items as $item) {
+            $level = isset($item['level']) ? (string) $item['level'] : 'ok';
+            if ($level === 'error') {
+                $status = 'error';
+                break;
+            }
+            if ($level === 'warning') {
+                $status = 'warning';
+            }
+        }
+
+        return [
+            'status' => $status,
+            'generated_at' => time(),
+            'items' => $items,
+        ];
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function run_mail_e2e_regression_check(): array
+    {
+        global $wpdb;
+
+        $items = [];
+        $window_days = 30;
+        $since_ts = max(0, current_time('timestamp') - ($window_days * DAY_IN_SECONDS));
+        $since_sql = date('Y-m-d H:i:s', $since_ts);
+        $table = $this->registrations->get_table();
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, session_id, occurrence_id, status, created_at FROM {$table} WHERE created_at >= %s ORDER BY id ASC",
+            $since_sql
+        ), ARRAY_A);
+        $rows = is_array($rows) ? $rows : [];
+
+        $logs = $this->logger ? $this->logger->all() : [];
+        $email_logs = [];
+        foreach ($logs as $log) {
+            if (!is_array($log)) {
+                continue;
+            }
+            if (($log['type'] ?? '') !== 'email') {
+                continue;
+            }
+            $email_logs[] = $log;
+        }
+
+        $allowed_statuses = ['registered', 'confirmed', 'cancelled', 'attended', 'no_show', 'waitlist'];
+        $invalid_status_count = 0;
+        $rows_by_id = [];
+        $open_regs = 0;
+        $waitlist_regs = 0;
+        foreach ($rows as $row) {
+            $reg_id = isset($row['id']) ? (int) $row['id'] : 0;
+            if ($reg_id <= 0) {
+                continue;
+            }
+            $status = sanitize_key((string) ($row['status'] ?? ''));
+            $rows_by_id[$reg_id] = [
+                'id' => $reg_id,
+                'status' => $status,
+            ];
+            if (!in_array($status, $allowed_statuses, true)) {
+                $invalid_status_count++;
+            }
+            if ($status === 'waitlist') {
+                $waitlist_regs++;
+            } else {
+                $open_regs++;
+            }
+        }
+
+        $sent_by_reg_type = [];
+        $attempt_by_reg_type = [];
+        $type_sent_counts = [];
+        $unresolved_subject_count = 0;
+
+        foreach ($email_logs as $log) {
+            $ctx = isset($log['context']) && is_array($log['context']) ? $log['context'] : [];
+            $ts = isset($log['ts']) ? (int) $log['ts'] : 0;
+            if ($ts > 0 && $ts < $since_ts) {
+                continue;
+            }
+
+            $reg_id = isset($ctx['registration_id']) ? (int) $ctx['registration_id'] : 0;
+            $type = sanitize_key((string) ($ctx['type'] ?? ''));
+            if ($reg_id <= 0 || $type === '') {
+                continue;
+            }
+
+            $status = sanitize_key((string) ($ctx['status'] ?? ''));
+            $result = sanitize_key((string) ($ctx['result'] ?? ''));
+            $is_sent = ($status === 'sent' || $result === 'sent');
+            $is_attempt = ($status === 'attempt');
+            if ($is_attempt) {
+                $attempt_by_reg_type[$reg_id][$type] = true;
+            }
+            if ($is_sent) {
+                if (!isset($sent_by_reg_type[$reg_id][$type])) {
+                    $sent_by_reg_type[$reg_id][$type] = [];
+                }
+                $sent_by_reg_type[$reg_id][$type][] = $ts;
+                $type_sent_counts[$type] = (int) ($type_sent_counts[$type] ?? 0) + 1;
+
+                $subject = (string) ($ctx['subject'] ?? '');
+                if ($subject !== '' && preg_match('/\{[a-z0-9_]+\}/i', $subject) === 1) {
+                    $unresolved_subject_count++;
+                }
+            }
+        }
+
+        $missing_confirmation = 0;
+        $missing_waitlist = 0;
+        foreach ($rows_by_id as $reg_id => $row) {
+            $status = (string) ($row['status'] ?? '');
+            if ($status === 'waitlist') {
+                if (empty($attempt_by_reg_type[$reg_id]['waitlist']) && empty($sent_by_reg_type[$reg_id]['waitlist'])) {
+                    $missing_waitlist++;
+                }
+                continue;
+            }
+            if (in_array($status, ['registered', 'confirmed', 'attended', 'no_show', 'cancelled'], true)) {
+                $has_confirmation_attempt = !empty($attempt_by_reg_type[$reg_id]['confirmation']) || !empty($sent_by_reg_type[$reg_id]['confirmation']);
+                if (!$has_confirmation_attempt) {
+                    $missing_confirmation++;
+                }
+            }
+        }
+
+        $throttle_window = 3 * HOUR_IN_SECONDS;
+        $duplicate_hits = 0;
+        foreach ($sent_by_reg_type as $reg_id => $types) {
+            foreach ($types as $type => $timestamps) {
+                if (!is_array($timestamps) || count($timestamps) < 2) {
+                    continue;
+                }
+                sort($timestamps);
+                for ($i = 1; $i < count($timestamps); $i++) {
+                    if (((int) $timestamps[$i] - (int) $timestamps[$i - 1]) <= $throttle_window) {
+                        $duplicate_hits++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        $scenario_counts = [
+            'registration_open' => $open_regs,
+            'waitlist' => $waitlist_regs,
+            'waitlist_promotion' => (int) ($type_sent_counts['waitlist_promotion'] ?? 0),
+            'registration_cancelled' => (int) ($type_sent_counts['registration_cancelled'] ?? 0),
+            'event_cancelled' => (int) ($type_sent_counts['event_cancelled'] ?? 0),
+            'reminder_followup' => min((int) ($type_sent_counts['reminder'] ?? 0), (int) ($type_sent_counts['followup'] ?? 0)),
+        ];
+
+        $items[] = [
+            'level' => ($scenario_counts['registration_open'] > 0) ? 'ok' : 'warning',
+            'message' => sprintf(__('Scenario registratie (open event): %d gevallen in laatste %d dagen.', 'event-hub'), (int) $scenario_counts['registration_open'], $window_days),
+        ];
+        $items[] = [
+            'level' => ($scenario_counts['waitlist'] > 0) ? 'ok' : 'warning',
+            'message' => sprintf(__('Scenario volzet + wachtlijst: %d gevallen.', 'event-hub'), (int) $scenario_counts['waitlist']),
+        ];
+        $items[] = [
+            'level' => ($scenario_counts['waitlist_promotion'] > 0) ? 'ok' : 'warning',
+            'message' => sprintf(__('Scenario wachtlijst promotie: %d verzonden mails.', 'event-hub'), (int) $scenario_counts['waitlist_promotion']),
+        ];
+        $items[] = [
+            'level' => ($scenario_counts['registration_cancelled'] > 0) ? 'ok' : 'warning',
+            'message' => sprintf(__('Scenario annulatie door deelnemer: %d annulatiemails.', 'event-hub'), (int) $scenario_counts['registration_cancelled']),
+        ];
+        $items[] = [
+            'level' => ($scenario_counts['event_cancelled'] > 0) ? 'ok' : 'warning',
+            'message' => sprintf(__('Scenario event annulatie: %d mails.', 'event-hub'), (int) $scenario_counts['event_cancelled']),
+        ];
+        $items[] = [
+            'level' => ($scenario_counts['reminder_followup'] > 0) ? 'ok' : 'warning',
+            'message' => sprintf(__('Scenario reminder/followup cron pad: %d gekoppelde gevallen.', 'event-hub'), (int) $scenario_counts['reminder_followup']),
+        ];
+
+        $items[] = [
+            'level' => ($invalid_status_count === 0) ? 'ok' : 'error',
+            'message' => $invalid_status_count === 0
+                ? __('Statuscontrole OK: geen ongeldige registratie-statussen gevonden.', 'event-hub')
+                : sprintf(__('Statuscontrole fout: %d registraties met ongeldige status.', 'event-hub'), $invalid_status_count),
+        ];
+        $items[] = [
+            'level' => ($duplicate_hits === 0) ? 'ok' : 'error',
+            'message' => $duplicate_hits === 0
+                ? __('Throttlecontrole OK: geen dubbele verzending binnen 3 uur gedetecteerd.', 'event-hub')
+                : sprintf(__('Throttlecontrole fout: %d potentiële dubbels binnen 3 uur.', 'event-hub'), $duplicate_hits),
+        ];
+        $items[] = [
+            'level' => ($missing_confirmation === 0) ? 'ok' : 'warning',
+            'message' => $missing_confirmation === 0
+                ? __('Geen ontbrekende confirmations gedetecteerd voor niet-wachtlijst registraties.', 'event-hub')
+                : sprintf(__('Mogelijk ontbrekende confirmations: %d registraties zonder confirmation attempt/sent.', 'event-hub'), $missing_confirmation),
+        ];
+        $items[] = [
+            'level' => ($missing_waitlist === 0) ? 'ok' : 'warning',
+            'message' => $missing_waitlist === 0
+                ? __('Geen ontbrekende wachtlijstmails gedetecteerd.', 'event-hub')
+                : sprintf(__('Mogelijk ontbrekende wachtlijstmails: %d registraties zonder waitlist attempt/sent.', 'event-hub'), $missing_waitlist),
+        ];
+        $items[] = [
+            'level' => ($unresolved_subject_count === 0) ? 'ok' : 'warning',
+            'message' => $unresolved_subject_count === 0
+                ? __('Placeholdercontrole OK: geen onvervangen placeholders in onderwerpen gevonden.', 'event-hub')
+                : sprintf(__('Placeholdercontrole waarschuwing: %d mails met onvervangen placeholders in onderwerp.', 'event-hub'), $unresolved_subject_count),
+        ];
+
+        $status = 'ok';
+        foreach ($items as $item) {
+            $level = isset($item['level']) ? (string) $item['level'] : 'ok';
+            if ($level === 'error') {
+                $status = 'error';
+                break;
+            }
+            if ($level === 'warning') {
+                $status = 'warning';
+            }
+        }
+
+        return [
+            'status' => $status,
+            'generated_at' => time(),
+            'window_days' => $window_days,
+            'items' => $items,
+        ];
+    }
+
+    private function get_mail_health_check_transient_key(): string
+    {
+        $user_id = get_current_user_id();
+        if ($user_id <= 0) {
+            $user_id = 0;
+        }
+        return 'event_hub_mail_health_' . $user_id;
+    }
+
+    private function get_mail_e2e_check_transient_key(): string
+    {
+        $user_id = get_current_user_id();
+        if ($user_id <= 0) {
+            $user_id = 0;
+        }
+        return 'event_hub_mail_e2e_' . $user_id;
+    }
+
 
 
     public function render_logs_page(): void
@@ -1261,6 +1911,7 @@ private function collect_stats(int $start_ts, int $end_ts): array
             echo '<div class="notice notice-success is-dismissible"><p>' . esc_html($msg) . '</p></div>';
         }
         echo '<p class="description">' . esc_html__('Basislog van e-mail- en registratie-events (laatste 200).', 'event-hub') . '</p>';
+        $this->render_mail_diagnostics_panel($logs);
 
         echo '<form method="get" action="' . esc_url(admin_url('admin.php')) . '" class="eh-filter-bar">';
         echo '<input type="hidden" name="page" value="event-hub-logs">';
@@ -2268,6 +2919,31 @@ private function collect_stats(int $start_ts, int $end_ts): array
 
         $current_session = isset($_POST['session_id']) ? (int) $_POST['session_id'] : $preselect;
         $current_occurrence = isset($_POST['occurrence_id']) ? (int) $_POST['occurrence_id'] : $preselect_occurrence;
+        $occurrence_map = [];
+        foreach ($sessions as $session) {
+            $occurrences = $this->registrations->get_occurrences((int) $session->ID);
+            if (!$occurrences) {
+                continue;
+            }
+            $items = [];
+            foreach ($occurrences as $occ) {
+                $occ_id = (int) ($occ['id'] ?? 0);
+                if ($occ_id <= 0) {
+                    continue;
+                }
+                $start = $occ['date_start'] ?? '';
+                $label = $start
+                    ? date_i18n(get_option('date_format') . ' ' . get_option('time_format'), strtotime($start))
+                    : ('#' . $occ_id);
+                $items[] = [
+                    'id' => $occ_id,
+                    'label' => $label,
+                ];
+            }
+            if ($items) {
+                $occurrence_map[(int) $session->ID] = $items;
+            }
+        }
 
 
 

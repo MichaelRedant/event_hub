@@ -976,6 +976,14 @@ class Widget_Session_Detail extends Widget_Base
         $occ_columns_setting = $settings['occurrence_columns'] ?? 'auto';
         $occ_gap_setting = $settings['occurrence_gap'] ?? [];
 
+        // Zorg dat form/script styles ook beschikbaar zijn in Elementor context.
+        if (!wp_style_is('event-hub-frontend-style', 'registered')) {
+            wp_register_style('event-hub-frontend-style', EVENT_HUB_URL . 'assets/css/frontend.css', [], EVENT_HUB_VERSION);
+        }
+        if (!wp_script_is('event-hub-frontend', 'registered')) {
+            wp_register_script('event-hub-frontend', EVENT_HUB_URL . 'assets/js/frontend-form.js', [], EVENT_HUB_VERSION, true);
+        }
+        wp_enqueue_style('event-hub-frontend-style');
         wp_enqueue_script('event-hub-frontend');
 
         echo '<div class="eh-session-form" data-event-hub-form="1">';

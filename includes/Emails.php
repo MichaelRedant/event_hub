@@ -5,6 +5,13 @@ defined('ABSPATH') || exit;
 
 class Emails
 {
+    private const HOOK_TYPE_MAP = [
+        'event_hub_send_reminder' => 'reminder',
+        'event_hub_send_followup' => 'followup',
+        'event_hub_send_confirmation' => 'confirmation',
+        'event_hub_send_waitlist_created' => 'waitlist',
+    ];
+
     /**
      * Beschikbare placeholders en beschrijvingen.
      * @var array<string,string>
@@ -66,9 +73,21 @@ class Emails
      */
     private function get_templates_for_session(int $session_id, string $meta_key, string $default_key): array
     {
-        $ids = array_values(array_filter((array) get_post_meta($session_id, $meta_key, true)));
+        $raw = (array) get_post_meta($session_id, $meta_key, true);
+        $raw_ids = [];
+        foreach ($raw as $value) {
+            $id = (int) $value;
+            if ($id > 0) {
+                $raw_ids[] = $id;
+            }
+        }
+        $raw_ids = array_values(array_unique($raw_ids));
+        $ids = Settings::normalize_template_ids($raw_ids);
+        if ($raw_ids !== $ids) {
+            update_post_meta($session_id, $meta_key, $ids);
+        }
         if ($ids) {
-            return array_map('intval', $ids);
+            return $ids;
         }
         return Settings::get_default_templates($default_key);
     }
@@ -86,6 +105,14 @@ class Emails
         add_action('event_hub_send_waitlist_created', [$this, 'send_waitlist_created'], 10, 1);
         add_action('event_hub_retry_email', [$this, 'retry_email'], 10, 2);
         $this->maybe_force_php_transport();
+    }
+
+    public static function resolve_mail_type_from_hook(string $hook, array $args = []): string
+    {
+        if ($hook === 'event_hub_retry_email') {
+            return isset($args[1]) ? sanitize_key((string) $args[1]) : 'retry';
+        }
+        return self::HOOK_TYPE_MAP[$hook] ?? sanitize_key($hook);
     }
 
     public function handle_registration_created(int $registration_id): void
@@ -378,7 +405,15 @@ class Emails
         add_filter('wp_mail_from_name', $filter_name);
         add_filter('wp_mail_content_type', $filter_content_type, 999);
         $attempt = $this->next_attempt_counter((int) ($reg['id'] ?? 0), $type);
-        $this->log_email_event('attempt', $type, $reg, ['attempt' => $attempt, 'subject' => $subject_f]);
+        $active_hook = current_filter();
+        $transport = $this->get_mail_transport_choice();
+        $this->log_email_event('attempt', $type, $reg, [
+            'attempt' => $attempt,
+            'retry_attempt' => max(0, $attempt - 1),
+            'subject' => $subject_f,
+            'hook' => $active_hook ? $active_hook : 'direct',
+            'transport' => $transport,
+        ]);
         $mail_error_message = '';
         $mail_failed_capture = static function (\WP_Error $error) use (&$mail_error_message): void {
             $message = trim((string) $error->get_error_message());
@@ -398,11 +433,22 @@ class Emails
             if (!empty($reg['session_id'])) {
                 add_post_meta((int) $reg['session_id'], '_eh_email_log_time', current_time('mysql'));
             }
-            $this->log_email_event('sent', $type, $reg, ['attempt' => $attempt]);
+            $this->log_email_event('sent', $type, $reg, [
+                'attempt' => $attempt,
+                'retry_attempt' => max(0, $attempt - 1),
+                'hook' => $active_hook ? $active_hook : 'direct',
+                'transport' => $transport,
+            ]);
             $this->mark_email_sent((int) ($reg['id'] ?? 0), $type, 3 * HOUR_IN_SECONDS);
             $this->reset_attempt_counter((int) ($reg['id'] ?? 0), $type);
         } else {
-            $this->log_email_event('failed', $type, $reg, ['attempt' => $attempt, 'error' => $mail_error_message]);
+            $this->log_email_event('failed', $type, $reg, [
+                'attempt' => $attempt,
+                'retry_attempt' => max(0, $attempt - 1),
+                'error' => $mail_error_message,
+                'hook' => $active_hook ? $active_hook : 'direct',
+                'transport' => $transport,
+            ]);
             $this->schedule_retry((int) ($reg['id'] ?? 0), $type);
         }
         if ($this->logger) {
@@ -412,6 +458,10 @@ class Emails
                 'type' => $type,
                 'to' => $reg['email'],
                 'subject' => $subject_f,
+                'hook' => $active_hook ? $active_hook : 'direct',
+                'transport' => $transport,
+                'retry_attempt' => max(0, $attempt - 1),
+                'attempt' => $attempt,
                 'result' => $sent ? 'sent' : 'failed',
                 'error' => $mail_error_message,
             ]);
@@ -632,7 +682,15 @@ class Emails
     {
         $mode = $timing['mode'] ?? 'immediate';
         $hours = max(0, (int) ($timing['hours'] ?? 0));
+        $log_context = $this->get_registration_log_context($registration_id);
+        $log_context['hook'] = $hook;
+        $log_context['timing_mode'] = $mode;
+        $log_context['timing_hours'] = $hours;
+        $log_context['transport'] = $this->get_mail_transport_choice();
         if ($mode === 'immediate') {
+            if ($this->logger) {
+                $this->logger->log('email', 'Email dispatch direct', $log_context);
+            }
             $immediate_cb();
             return;
         }
@@ -640,6 +698,11 @@ class Emails
         $end_ts = $end_raw ? strtotime($end_raw) : false;
         $base_ts = ($mode === 'after_end') ? ($end_ts ?: $start_ts) : $start_ts;
         if (!$base_ts) {
+            if ($this->logger) {
+                $fallback_context = $log_context;
+                $fallback_context['reason'] = 'missing_base_timestamp';
+                $this->logger->log('email', 'Email dispatch fallback naar direct', $fallback_context);
+            }
             $immediate_cb();
             return;
         }
@@ -648,6 +711,12 @@ class Emails
             : $base_ts + ($hours * HOUR_IN_SECONDS);
         if ($target_ts <= time()) {
             $target_ts = time() + MINUTE_IN_SECONDS;
+        }
+        if ($this->logger) {
+            $scheduled_context = $log_context;
+            $scheduled_context['target_ts'] = $target_ts;
+            $scheduled_context['target_at'] = gmdate('c', $target_ts);
+            $this->logger->log('email', 'Email dispatch ingepland', $scheduled_context);
         }
         $this->schedule_single_email_event($target_ts, $hook, [$registration_id]);
     }
@@ -658,6 +727,14 @@ class Emails
         $map = $this->get_retry_callback_map();
         if (!isset($map[$type]) || !method_exists($this, $map[$type])) {
             return;
+        }
+        if ($this->logger) {
+            $ctx = $this->get_registration_log_context($registration_id);
+            $ctx['hook'] = 'event_hub_retry_email';
+            $ctx['type'] = $type;
+            $ctx['retry_attempt'] = $this->get_attempt_counter($registration_id, $type) + 1;
+            $ctx['transport'] = $this->get_mail_transport_choice();
+            $this->logger->log('email', 'Email retry uitgevoerd', $ctx);
         }
         $callback = [$this, $map[$type]];
         $callback($registration_id);
@@ -672,7 +749,24 @@ class Emails
         }
         $attempts = $this->get_attempt_counter($registration_id, $type);
         if ($attempts >= 3) {
+            if ($this->logger) {
+                $ctx = $this->get_registration_log_context($registration_id);
+                $ctx['type'] = $type;
+                $ctx['hook'] = 'event_hub_retry_email';
+                $ctx['retry_attempt'] = $attempts;
+                $ctx['transport'] = $this->get_mail_transport_choice();
+                $this->logger->log('email', 'Email retry limiet bereikt', $ctx);
+            }
             return;
+        }
+        if ($this->logger) {
+            $ctx = $this->get_registration_log_context($registration_id);
+            $ctx['type'] = $type;
+            $ctx['hook'] = 'event_hub_retry_email';
+            $ctx['retry_attempt'] = $attempts + 1;
+            $ctx['transport'] = $this->get_mail_transport_choice();
+            $ctx['target_at'] = gmdate('c', time() + 300);
+            $this->logger->log('email', 'Email retry ingepland', $ctx);
         }
         $this->schedule_single_email_event(time() + 300, 'event_hub_retry_email', [$registration_id, $type]);
     }
@@ -728,11 +822,16 @@ class Emails
         if (!$this->logger) {
             return;
         }
+        $hook = current_filter();
+        $attempt = isset($extra['attempt']) ? (int) $extra['attempt'] : 0;
         $ctx = array_merge([
             'registration_id' => $reg['id'] ?? '',
             'session_id' => $reg['session_id'] ?? '',
             'type' => $type,
             'status' => $status,
+            'hook' => $hook ? $hook : 'direct',
+            'transport' => $this->get_mail_transport_choice(),
+            'retry_attempt' => max(0, $attempt - 1),
         ], $extra);
         $this->logger->log('email', 'Email ' . $status, $ctx);
     }
@@ -809,9 +908,41 @@ class Emails
     private function schedule_single_email_event(int $timestamp, string $hook, array $args): void
     {
         if (wp_next_scheduled($hook, $args)) {
+            if ($this->logger) {
+                $ctx = [
+                    'hook' => $hook,
+                    'type' => self::resolve_mail_type_from_hook($hook, $args),
+                    'target_ts' => $timestamp,
+                    'target_at' => gmdate('c', $timestamp),
+                    'transport' => $this->get_mail_transport_choice(),
+                ];
+                if (isset($args[0])) {
+                    $ctx['registration_id'] = (int) $args[0];
+                }
+                if (isset($args[1])) {
+                    $ctx['arg_1'] = is_scalar($args[1]) ? (string) $args[1] : wp_json_encode($args[1]);
+                }
+                $this->logger->log('email', 'Email schedule overgeslagen (bestaat al)', $ctx);
+            }
             return;
         }
         wp_schedule_single_event($timestamp, $hook, $args);
+        if ($this->logger) {
+            $ctx = [
+                'hook' => $hook,
+                'type' => self::resolve_mail_type_from_hook($hook, $args),
+                'target_ts' => $timestamp,
+                'target_at' => gmdate('c', $timestamp),
+                'transport' => $this->get_mail_transport_choice(),
+            ];
+            if (isset($args[0])) {
+                $ctx['registration_id'] = (int) $args[0];
+            }
+            if (isset($args[1])) {
+                $ctx['arg_1'] = is_scalar($args[1]) ? (string) $args[1] : wp_json_encode($args[1]);
+            }
+            $this->logger->log('email', 'Email schedule toegevoegd', $ctx);
+        }
         $this->trigger_wp_cron_async();
     }
 
@@ -990,6 +1121,29 @@ class Emails
                 $phpmailer->isMail();
             }
         }, 1);
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function get_registration_log_context(int $registration_id): array
+    {
+        $ctx = ['registration_id' => $registration_id];
+        if ($registration_id <= 0) {
+            return $ctx;
+        }
+        $reg = $this->registrations->get_registration($registration_id);
+        if ($reg && isset($reg['session_id'])) {
+            $ctx['session_id'] = (int) $reg['session_id'];
+        }
+        return $ctx;
+    }
+
+    private function get_mail_transport_choice(): string
+    {
+        $opts = Settings::get_email_settings();
+        $transport = sanitize_key((string) ($opts['mail_transport'] ?? 'php'));
+        return in_array($transport, ['php', 'smtp_plugin'], true) ? $transport : 'php';
     }
 }
 

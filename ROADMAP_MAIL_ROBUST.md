@@ -1,6 +1,6 @@
 # Event Hub - Mail Robuustheid Roadmap
 
-Laatst bijgewerkt: 2026-03-05
+Laatst bijgewerkt: 2026-03-06
 
 ## Doel
 E-mailverzending in Event Hub betrouwbaar maken voor shared hosting (PHP mail), met correcte automatische flows, duidelijke foutdiagnose en beheersbare templates.
@@ -28,6 +28,10 @@ E-mailverzending in Event Hub betrouwbaar maken voor shared hosting (PHP mail), 
 - `wp_mail_failed` foutboodschap wordt gecapteerd en gelogd voor betere diagnose.
 - Testmail toont foutdetail in admin notice (indien beschikbaar).
 
+### Extra UX-fixes (afgerond)
+- Nieuwe events tonen nu automatisch de in E-mailinstellingen gekozen standaardtemplates als voorgeselecteerde event-templates.
+- Bij manueel toevoegen van een inschrijving kan voor multi-events nu een specifieke datum/occurrence gekozen worden.
+
 ## Open aandachtspunten
 - PHP CLI lint kon lokaal niet uitgevoerd worden in deze omgeving.
 - Historische jobs in bestaande WP-Cron queues moeten na deploy gecontroleerd worden op duplicaten.
@@ -36,10 +40,10 @@ E-mailverzending in Event Hub betrouwbaar maken voor shared hosting (PHP mail), 
 ## Volgende stappen
 
 ### Fase 3 - Template governance en migraties
-- [ ] Nieuwe migratie toevoegen (DB version bump) voor mailcomponent.
-- [ ] Ontbrekende standaardtemplates automatisch (her)seeden op basis van `_eh_email_system_key`.
-- [ ] Controle op default template-koppelingen in settings/events en auto-herstel bij ontbrekende IDs.
-- [ ] Admin notice toevoegen bij ontbrekende of lege kernsjablonen.
+- [x] Nieuwe migratie toevoegen (DB version bump) voor mailcomponent.
+- [x] Ontbrekende standaardtemplates automatisch (her)seeden op basis van `_eh_email_system_key`.
+- [x] Controle op default template-koppelingen in settings/events en auto-herstel bij ontbrekende IDs.
+- [x] Admin notice toevoegen bij ontbrekende of lege kernsjablonen.
 
 Acceptatiecriteria:
 - Op bestaande installaties worden ontbrekende defaults automatisch teruggezet zonder dataverlies.
@@ -47,26 +51,26 @@ Acceptatiecriteria:
 - Nieuwe installaties starten met complete, bruikbare defaults.
 
 ### Fase 4 - Monitoring en diagnose
-- [ ] Maildiagnosepaneel uitbreiden met:
+- [x] Maildiagnosepaneel uitbreiden met:
   - laatste fout per type
   - retry teller
   - volgende geplande mailjobs
-- [ ] Extra context in logs (hook, timing mode, transportkeuze, retry-attempt).
-- [ ] Snelle "mail health check" actie in admin (config + template checks).
+- [x] Extra context in logs (hook, timing mode, transportkeuze, retry-attempt).
+- [x] Snelle "mail health check" actie in admin (config + template checks).
 
 Acceptatiecriteria:
 - Beheerder kan in 1 scherm zien waarom mails niet vertrekken.
 - Herhaalproblemen zijn traceerbaar zonder server shell toegang.
 
 ### Fase 5 - E2E regressietesten
-- [ ] Testmatrix uitvoeren:
+- [x] Testmatrix uitvoeren:
   - registratie (open event)
   - volzet + wachtlijst
   - wachtlijst promotie
   - annulatie door deelnemer
   - event annulatie
   - reminder/followup cron pad
-- [ ] Controle op:
+- [x] Controle op:
   - juiste statusovergangen
   - exact 1 verzending per mailtype binnen throttle-venster
   - correcte placeholders in output

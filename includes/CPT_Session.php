@@ -677,6 +677,28 @@ class CPT_Session
         }
     }
 
+    /**
+     * Voor nieuwe events tonen we direct de globale default templates.
+     *
+     * @return array<int,int>
+     */
+    private function get_initial_email_template_selection(int $post_id, string $meta_key, string $default_key): array
+    {
+        $raw = get_post_meta($post_id, $meta_key, true);
+        $selected = [];
+        if (is_array($raw)) {
+            $selected = Settings::normalize_template_ids(array_map('intval', $raw));
+        }
+        if ($selected) {
+            return $selected;
+        }
+        // Als er al expliciet meta bestaat (ook leeg), respecteer dat en forceer geen defaults.
+        if (metadata_exists('post', $post_id, $meta_key)) {
+            return [];
+        }
+        return Settings::get_default_templates($default_key);
+    }
+
     public function render_meta_box(\WP_Post $post): void
     {
         // Needed for media modal (colleagues photos).
@@ -798,12 +820,12 @@ class CPT_Session
                 return $a_rank < $b_rank ? -1 : 1;
             });
         }
-        $sel_confirm = (array) get_post_meta($post->ID, '_eh_email_confirm_templates', true);
-        $sel_remind  = (array) get_post_meta($post->ID, '_eh_email_reminder_templates', true);
-        $sel_follow  = (array) get_post_meta($post->ID, '_eh_email_followup_templates', true);
-        $sel_waitlist = (array) get_post_meta($post->ID, '_eh_email_waitlist_templates', true);
-        $sel_event_cancel = (array) get_post_meta($post->ID, '_eh_email_event_cancelled_templates', true);
-        $sel_reg_cancel = (array) get_post_meta($post->ID, '_eh_email_registration_cancelled_templates', true);
+        $sel_confirm = $this->get_initial_email_template_selection($post->ID, '_eh_email_confirm_templates', 'confirmation');
+        $sel_remind  = $this->get_initial_email_template_selection($post->ID, '_eh_email_reminder_templates', 'reminder');
+        $sel_follow  = $this->get_initial_email_template_selection($post->ID, '_eh_email_followup_templates', 'followup');
+        $sel_waitlist = $this->get_initial_email_template_selection($post->ID, '_eh_email_waitlist_templates', 'waitlist');
+        $sel_event_cancel = $this->get_initial_email_template_selection($post->ID, '_eh_email_event_cancelled_templates', 'event_cancelled');
+        $sel_reg_cancel = $this->get_initial_email_template_selection($post->ID, '_eh_email_registration_cancelled_templates', 'registration_cancelled');
         $custom_email_fields = [
             'confirmation' => __('Bevestiging inschrijving', 'event-hub'),
             'reminder' => __('Herinnering (voor start)', 'event-hub'),

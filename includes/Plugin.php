@@ -40,6 +40,7 @@ class Plugin
         $this->migrations    = new Migrations();
         add_action('admin_notices', [$this->settings, 'maybe_notice_cpt_tax_issues']);
         add_action('admin_notices', [$this->settings, 'maybe_notice_linked_sync']);
+        add_action('admin_notices', [$this->settings, 'maybe_notice_core_template_issues']);
     }
 
     public function init(): void
@@ -98,6 +99,8 @@ class Plugin
             add_action('wp_ajax_event_hub_search_linked_events', [$this->cpt_session, 'ajax_search_linked_events']);
         }
         add_action('admin_post_event_hub_delete_logs', [$this->admin_menus, 'handle_delete_logs']);
+        add_action('admin_post_event_hub_mail_health_check', [$this->admin_menus, 'handle_mail_health_check']);
+        add_action('admin_post_event_hub_mail_e2e_check', [$this->admin_menus, 'handle_mail_e2e_check']);
         add_action('admin_post_event_hub_sync_linked_events', [$this->settings, 'handle_linked_sync_action']);
         add_action('save_post', [$this->settings, 'maybe_sync_from_linked_event'], 20, 3);
 

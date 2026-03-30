@@ -8,6 +8,24 @@ class Settings
     public const OPTION = 'event_hub_email_settings';
     public const OPTION_GENERAL = 'event_hub_general_settings';
     private static bool $sync_lock = false;
+    private const TEMPLATE_OPTION_KEY_MAP = [
+        'confirmation' => 'default_confirm_templates',
+        'reminder' => 'default_reminder_templates',
+        'followup' => 'default_followup_templates',
+        'waitlist' => 'default_waitlist_templates',
+        'waitlist_promotion' => 'default_waitlist_templates',
+        'event_cancelled' => 'default_event_cancelled_templates',
+        'registration_cancelled' => 'default_registration_cancelled_templates',
+    ];
+    private const CORE_TEMPLATE_SYSTEM_KEYS = [
+        'confirmation' => ['confirmation_default'],
+        'reminder' => ['reminder_default'],
+        'followup' => ['followup_default'],
+        'waitlist' => ['waitlist_default'],
+        'waitlist_promotion' => ['waitlist_promotion_default'],
+        'event_cancelled' => ['event_cancelled_default'],
+        'registration_cancelled' => ['registration_cancelled_default'],
+    ];
 
     public function register_settings(): void
     {
@@ -1456,7 +1474,7 @@ class Settings
         ];
         foreach ($default_template_keys as $k) {
             if (!empty($input[$k]) && is_array($input[$k])) {
-                $out[$k] = array_values(array_unique(array_map('intval', $input[$k])));
+                $out[$k] = self::normalize_template_ids((array) $input[$k]);
             } else {
                 $out[$k] = [];
             }
@@ -1654,25 +1672,224 @@ class Settings
 
     public static function get_default_templates(string $key): array
     {
-        $map = [
-            'confirmation' => 'default_confirm_templates',
-            'reminder' => 'default_reminder_templates',
-            'followup' => 'default_followup_templates',
-            'waitlist' => 'default_waitlist_templates',
-            'waitlist_promotion' => 'default_waitlist_templates',
-            'event_cancelled' => 'default_event_cancelled_templates',
-            'registration_cancelled' => 'default_registration_cancelled_templates',
-        ];
         $opts = self::get_email_settings();
-        $option_key = $map[$key] ?? '';
-        if ($option_key && !empty($opts[$option_key]) && is_array($opts[$option_key])) {
-            $selected = array_values(array_unique(array_filter(array_map('intval', (array) $opts[$option_key]))));
+        $option_key = self::TEMPLATE_OPTION_KEY_MAP[$key] ?? '';
+        if ($option_key) {
+            $raw_selected = self::extract_template_ids($opts[$option_key] ?? []);
+            $selected = self::normalize_template_ids($raw_selected);
+            if ($raw_selected !== $selected) {
+                self::update_email_template_option_ids($option_key, $selected);
+            }
             if ($selected) {
                 return $selected;
             }
         }
 
         return self::get_seeded_default_template_ids($key);
+    }
+
+    /**
+     * Herstelt defecte template-ID koppelingen in globale instellingen en event-meta.
+     * Wordt aangeroepen in migraties zodat bestaande installaties zichzelf corrigeren.
+     */
+    public static function repair_email_template_links(): void
+    {
+        $opts = get_option(self::OPTION, []);
+        if (!is_array($opts)) {
+            $opts = [];
+        }
+
+        $option_fallback_type = [
+            'default_confirm_templates' => 'confirmation',
+            'default_reminder_templates' => 'reminder',
+            'default_followup_templates' => 'followup',
+            'default_event_cancelled_templates' => 'event_cancelled',
+            'default_registration_cancelled_templates' => 'registration_cancelled',
+        ];
+        $option_keys = array_values(array_unique(array_values(self::TEMPLATE_OPTION_KEY_MAP)));
+        $settings_changed = false;
+        foreach ($option_keys as $option_key) {
+            $raw_ids = self::extract_template_ids($opts[$option_key] ?? []);
+            $clean_ids = self::normalize_template_ids($raw_ids);
+            if (!$clean_ids && isset($option_fallback_type[$option_key])) {
+                $clean_ids = self::get_seeded_default_template_ids($option_fallback_type[$option_key]);
+            }
+            if (!isset($opts[$option_key]) || $raw_ids !== $clean_ids) {
+                $opts[$option_key] = $clean_ids;
+                $settings_changed = true;
+            }
+        }
+        if ($settings_changed) {
+            update_option(self::OPTION, $opts);
+        }
+
+        global $wpdb;
+        $event_meta_keys = [
+            '_eh_email_confirm_templates',
+            '_eh_email_reminder_templates',
+            '_eh_email_followup_templates',
+            '_eh_email_waitlist_templates',
+            '_eh_email_event_cancelled_templates',
+            '_eh_email_registration_cancelled_templates',
+        ];
+        foreach ($event_meta_keys as $meta_key) {
+            $post_ids = $wpdb->get_col($wpdb->prepare(
+                "SELECT DISTINCT post_id FROM {$wpdb->postmeta} WHERE meta_key = %s",
+                $meta_key
+            ));
+            if (!$post_ids) {
+                continue;
+            }
+            foreach ($post_ids as $post_id) {
+                $post_id = (int) $post_id;
+                if ($post_id <= 0) {
+                    continue;
+                }
+                $raw_ids = self::extract_template_ids(get_post_meta($post_id, $meta_key, true));
+                $clean_ids = self::normalize_template_ids($raw_ids);
+                if ($raw_ids !== $clean_ids) {
+                    update_post_meta($post_id, $meta_key, $clean_ids);
+                }
+            }
+        }
+    }
+
+    /**
+     * @return array<int,string>
+     */
+    public static function get_core_template_integrity_issues(): array
+    {
+        $labels = [
+            'confirmation' => __('Bevestiging', 'event-hub'),
+            'reminder' => __('Herinnering', 'event-hub'),
+            'followup' => __('Nadien', 'event-hub'),
+            'waitlist' => __('Wachtlijst bevestiging', 'event-hub'),
+            'waitlist_promotion' => __('Wachtlijst promotie', 'event-hub'),
+            'event_cancelled' => __('Event geannuleerd', 'event-hub'),
+            'registration_cancelled' => __('Inschrijving geannuleerd', 'event-hub'),
+        ];
+        $issues = [];
+        foreach ($labels as $type => $label) {
+            $ids = self::get_seeded_default_template_ids($type);
+            if (!$ids) {
+                $issues[] = sprintf(__('Ontbrekend kernsjabloon: %s.', 'event-hub'), $label);
+                continue;
+            }
+            $template_id = (int) $ids[0];
+            $subject = trim((string) get_post_meta($template_id, '_eh_email_subject', true));
+            $body = trim((string) get_post_meta($template_id, '_eh_email_body', true));
+            if ($subject === '' || $body === '') {
+                $issues[] = sprintf(__('Kernsjabloon is leeg: %s.', 'event-hub'), $label);
+            }
+        }
+        return $issues;
+    }
+
+    public function maybe_notice_core_template_issues(): void
+    {
+        if (!is_admin() || !current_user_can('edit_posts')) {
+            return;
+        }
+        if (!function_exists('get_current_screen')) {
+            return;
+        }
+        $screen = get_current_screen();
+        if (!$screen) {
+            return;
+        }
+        $is_settings_page = isset($_GET['page']) && $_GET['page'] === 'event-hub-settings';
+        $is_email_screen = (($screen->post_type ?? '') === CPT_Email::CPT);
+        if (!$is_settings_page && !$is_email_screen) {
+            return;
+        }
+        $issues = self::get_core_template_integrity_issues();
+        if (!$issues) {
+            return;
+        }
+        $templates_url = admin_url('edit.php?post_type=' . CPT_Email::CPT);
+        echo '<div class="notice notice-warning"><p><strong>' . esc_html__('Event Hub e-mailwaarschuwing', 'event-hub') . '</strong></p><ul style="margin:0 0 8px 18px;list-style:disc;">';
+        foreach ($issues as $issue) {
+            echo '<li>' . esc_html($issue) . '</li>';
+        }
+        echo '</ul><p><a class="button button-secondary" href="' . esc_url($templates_url) . '">' . esc_html__('Open e-mailsjablonen', 'event-hub') . '</a></p></div>';
+    }
+
+    /**
+     * @param array<int,mixed> $ids
+     * @return array<int,int>
+     */
+    public static function normalize_template_ids(array $ids): array
+    {
+        $normalized = self::extract_template_ids($ids);
+        if (!$normalized) {
+            return [];
+        }
+        $valid = [];
+        foreach ($normalized as $template_id) {
+            if (self::is_usable_template_post($template_id)) {
+                $valid[] = $template_id;
+            }
+        }
+        return $valid;
+    }
+
+    /**
+     * @param mixed $raw
+     * @return array<int,int>
+     */
+    private static function extract_template_ids($raw): array
+    {
+        $ids = [];
+        if (is_array($raw)) {
+            foreach ($raw as $value) {
+                $id = (int) $value;
+                if ($id > 0) {
+                    $ids[] = $id;
+                }
+            }
+        } else {
+            $id = (int) $raw;
+            if ($id > 0) {
+                $ids[] = $id;
+            }
+        }
+        return array_values(array_unique($ids));
+    }
+
+    private static function is_usable_template_post(int $template_id): bool
+    {
+        if ($template_id <= 0) {
+            return false;
+        }
+        $post = get_post($template_id);
+        if (!$post || $post->post_type !== CPT_Email::CPT) {
+            return false;
+        }
+        $status = get_post_status($template_id);
+        if ($status === 'trash' || $status === 'auto-draft') {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * @param array<int,int> $ids
+     */
+    private static function update_email_template_option_ids(string $option_key, array $ids): void
+    {
+        if ($option_key === '') {
+            return;
+        }
+        $opts = get_option(self::OPTION, []);
+        if (!is_array($opts)) {
+            $opts = [];
+        }
+        $current = self::extract_template_ids($opts[$option_key] ?? []);
+        if ($current === $ids) {
+            return;
+        }
+        $opts[$option_key] = $ids;
+        update_option(self::OPTION, $opts);
     }
 
     private static function get_seeded_default_template_ids(string $key): array
@@ -1682,16 +1899,7 @@ class Settings
             return $cache[$key];
         }
 
-        $system_keys_map = [
-            'confirmation' => ['confirmation_default'],
-            'reminder' => ['reminder_default'],
-            'followup' => ['followup_default'],
-            'waitlist' => ['waitlist_default'],
-            'waitlist_promotion' => ['waitlist_promotion_default'],
-            'event_cancelled' => ['event_cancelled_default'],
-            'registration_cancelled' => ['registration_cancelled_default'],
-        ];
-        $system_keys = $system_keys_map[$key] ?? [];
+        $system_keys = self::CORE_TEMPLATE_SYSTEM_KEYS[$key] ?? [];
         if (!$system_keys) {
             $cache[$key] = [];
             return [];
@@ -1717,7 +1925,7 @@ class Settings
         foreach ($system_keys as $system_key) {
             $matches = get_posts([
                 'post_type' => CPT_Email::CPT,
-                'post_status' => ['publish', 'future'],
+                'post_status' => ['publish', 'future', 'draft', 'pending', 'private'],
                 'posts_per_page' => 1,
                 'fields' => 'ids',
                 'meta_query' => [

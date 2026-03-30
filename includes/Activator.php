@@ -92,7 +92,10 @@ class Activator
             if ($body === '') {
                 continue;
             }
-            if (self::default_template_exists($key, $title)) {
+            if ($key !== '' && self::find_default_template_id_by_system_key($key) > 0) {
+                continue;
+            }
+            if ($key === '' && self::default_template_exists_by_title($title)) {
                 continue;
             }
             $post_id = wp_insert_post([
@@ -113,27 +116,29 @@ class Activator
         }
     }
 
-    private static function default_template_exists(string $key, string $title): bool
+    private static function find_default_template_id_by_system_key(string $key): int
     {
-        if ($key !== '') {
-            $existing = get_posts([
-                'post_type' => CPT_Email::CPT,
-                'posts_per_page' => 1,
-                'post_status' => 'any',
-                'fields' => 'ids',
-                'meta_query' => [
-                    [
-                        'key' => '_eh_email_system_key',
-                        'value' => $key,
-                        'compare' => '=',
-                    ],
-                ],
-            ]);
-            if ($existing) {
-                return true;
-            }
+        if ($key === '') {
+            return 0;
         }
+        $existing = get_posts([
+            'post_type' => CPT_Email::CPT,
+            'posts_per_page' => 1,
+            'post_status' => ['publish', 'future', 'draft', 'pending', 'private'],
+            'fields' => 'ids',
+            'meta_query' => [
+                [
+                    'key' => '_eh_email_system_key',
+                    'value' => $key,
+                    'compare' => '=',
+                ],
+            ],
+        ]);
+        return $existing ? (int) $existing[0] : 0;
+    }
 
+    private static function default_template_exists_by_title(string $title): bool
+    {
         $query = new \WP_Query([
             'post_type' => CPT_Email::CPT,
             'post_status' => 'any',

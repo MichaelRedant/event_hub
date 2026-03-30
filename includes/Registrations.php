@@ -55,6 +55,7 @@ class Registrations
         $data = wp_parse_args($data, $defaults);
 
         $waitlist_opt_in = !empty($data['waitlist_opt_in']);
+        $raw_extra = isset($data['extra']) && is_array($data['extra']) ? $data['extra'] : [];
 
         $data = [
             'session_id' => (int) $data['session_id'],
@@ -154,15 +155,13 @@ class Registrations
 
         // Extra fields: validate against event config
         $extra_fields = $this->get_extra_fields((int) $data['session_id']);
-        $extra_payload = $this->sanitize_extra_payload($extra_fields, $data['extra']);
+        $extra_payload = $this->sanitize_extra_payload($extra_fields, $raw_extra);
         if ($extra_payload instanceof \WP_Error) {
             return $extra_payload;
         }
         if (!empty($extra_payload)) {
             $data['extra_data'] = wp_json_encode($extra_payload);
         }
-        unset($data['extra']);
-
         $inserted = $wpdb->insert(
             $this->table,
             $data,

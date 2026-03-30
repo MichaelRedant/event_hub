@@ -9,7 +9,7 @@ defined('ABSPATH') || exit;
  */
 class Migrations
 {
-    public const DB_VERSION = '1.4.1';
+    public const DB_VERSION = '1.4.2';
     private const OPTION = 'event_hub_db_version';
 
     public function run(): void
@@ -23,6 +23,7 @@ class Migrations
         Activator::create_tables();
         $this->maybe_update_registration_indexes();
         Activator::seed_default_templates();
+        Settings::repair_email_template_links();
 
         update_option(self::OPTION, self::DB_VERSION);
     }
